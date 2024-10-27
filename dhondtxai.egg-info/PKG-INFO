@@ -1,11 +1,16 @@
 Metadata-Version: 2.1
-Name: dhondt-xai
-Version: 0.2
+Name: dhondtxai
+Version: 0.6.1.4
 Summary: A library for applying D'Hondt method on feature importances from decision tree models
-Home-page: https://github.com/turkerbdonmez/dhondt-xai
-Author: Ali Furkan Kamanlı
+Home-page: https://github.com/turkerbdonmez/dhondtxai
+Author: Türker Berk DÖNMEZ
 Author-email: furkan@example.com
 Classifier: Programming Language :: Python :: 3
 Classifier: License :: OSI Approved :: MIT License
 Classifier: Operating System :: OS Independent
 Requires-Python: >=3.6
+Requires-Dist: numpy
+Requires-Dist: matplotlib
+Requires-Dist: xgboost
+Requires-Dist: scikit-learn
+Requires-Dist: catboost

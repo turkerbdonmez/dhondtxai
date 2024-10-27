@@ -3,7 +3,7 @@
 import pandas as pd
 from catboost import CatBoostClassifier
 from sklearn.model_selection import train_test_split
-from dhondt_xai import DhondtXAI, plot_parliament  # Import the DhondtXAI class and plot_parliament function
+from dhondtxai import DhondtXAI, plot_parliament  # Import the DhondtXAI class and plot_parliament function
 
 # Load the dataset
 data = pd.read_csv('/content/drive/MyDrive/glioma/TCGA_InfoWithGrade.csv')  # Adjust the path according to your setup
@@ -19,13 +19,13 @@ X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_
 model = CatBoostClassifier(verbose=0, eval_metric='Accuracy')
 
 # Use DhondtXAI for model training and feature importance analysis
-dhondt_xai = DhondtXAI(model)
+dhondtxai = DhondtXAI(model)
 
 # Train the model using the DhondtXAI class - pass both X_train and y_train
-dhondt_xai.fit(X_train, y_train)
+dhondtxai.fit(X_train, y_train)
 
 # Kullanıcı dostu arayüz ile ittifakları ve dışlanacak değişkenleri seçin
-alliances, exclude_features = dhondt_xai.select_features(X.columns)
+alliances, exclude_features = dhondtxai.select_features(X.columns)
 
 # Specify parameters for the D'Hondt method dynamically
 num_votes = int(input("Toplam oy sayısını girin: "))
@@ -34,7 +34,7 @@ threshold_input = input("Eşik değerini (yüzde olarak) girin veya 'None' yazı
 threshold = None if threshold_input.lower() == 'none' else float(threshold_input)
 
 # Apply the D'Hondt method
-features, votes = dhondt_xai.apply_dhondt(
+features, votes = dhondtxai.apply_dhondt(
     num_votes=num_votes,
     num_mps=num_mps,
     threshold=threshold,
@@ -48,7 +48,7 @@ for feature, vote in zip(features, votes):
     print(f"{feature}: {int(vote)} votes")
 
 # Use the D'Hondt method to allocate seats
-seats = dhondt_xai.dhondt_method(votes, num_mps)
+seats = dhondtxai.dhondt_method(votes, num_mps)
 
 # Display D'Hondt results
 print("\nD'Hondt Method Results:")
@@ -56,7 +56,7 @@ for feature, seat in zip(features, seats):
     print(f"{feature}: {seat} MPs")
 
 # Plot the results using plot_parliament
-dhondt_xai.plot_results(features, seats)
+dhondtxai.plot_results(features, seats)
 
 # Additional: Create a visual representation of the parliament using plot_parliament
 plot_parliament(

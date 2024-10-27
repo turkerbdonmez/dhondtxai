@@ -1,4 +1,3 @@
-
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
@@ -10,17 +9,20 @@ def plot_parliament(total_seats, features, seats, slices=50, additional_rows=5):
     if len(features) != len(seats):
         raise ValueError("Number of features and seats must match.")
     
-    # Renkleri belirleme
+    # Özellik sıralaması ve model uyumu için sabit renk eşleşmesi sağla
+    # Özelliklerin sırasına göre bir renk haritası oluştur ve aynı sıralama ile renklendir
     colors = ['red', 'blue', 'green', 'yellow', 'orange', 'purple', 'cyan', 'magenta', 'lime', 'pink']
-    
-    # Eğer feature sayısı renk sayısından fazlaysa, renk listesini genişletiyoruz
     if len(features) > len(colors):
         import matplotlib.colors as mcolors
         all_colors = list(mcolors.CSS4_COLORS.values())
         random.shuffle(all_colors)
         colors += all_colors[:len(features) - len(colors)]
-    else:
-        colors = colors[:len(features)]
+    
+    # Her bir özelliğe sabit bir renk eşlemesi yap
+    feature_colors = {feature: colors[i % len(colors)] for i, feature in enumerate(features)}
+    
+    # Özellik sıralamasını belirle
+    sorted_features = sorted(features, key=lambda f: seats[features.index(f)], reverse=True)
     
     # Meclis düzeni parametreleri
     pieces_per_slice_without_additional = math.ceil(total_seats / slices)
@@ -42,8 +44,8 @@ def plot_parliament(total_seats, features, seats, slices=50, additional_rows=5):
     radial_angles = np.linspace(180, 0, slices + 1)
     
     current_feature = 0
-    current_color = colors[current_feature]
-    remaining_seats = seats[current_feature]
+    current_color = feature_colors[sorted_features[current_feature]]
+    remaining_seats = seats[features.index(sorted_features[current_feature])]
     
     total_assigned_seats = 0
     
@@ -55,10 +57,10 @@ def plot_parliament(total_seats, features, seats, slices=50, additional_rows=5):
             if total_assigned_seats >= total_seats:
                 break
 
-            if remaining_seats == 0 and current_feature < len(seats) - 1:
+            if remaining_seats == 0 and current_feature < len(sorted_features) - 1:
                 current_feature += 1
-                remaining_seats = seats[current_feature]
-                current_color = colors[current_feature]
+                remaining_seats = seats[features.index(sorted_features[current_feature])]
+                current_color = feature_colors[sorted_features[current_feature]]
 
             inner_radius = start_radius + (piece - additional_rows) * piece_depth
             outer_radius = inner_radius + piece_depth - 0.05
@@ -94,7 +96,8 @@ def plot_parliament(total_seats, features, seats, slices=50, additional_rows=5):
     ax.axis('off')
     plt.tight_layout()
 
-    legend_patches = [plt.Rectangle((0, 0), 1, 1, color=colors[i], label=f"{features[i]} ({seats[i]} MV)") for i in range(len(features))]
+    # Legend Creation - Özelliklerin sıralaması ve renklerle uyumu sağla
+    legend_patches = [plt.Rectangle((0, 0), 1, 1, color=feature_colors[feature], label=f"{feature} ({seats[features.index(feature)]} MV)") for feature in sorted_features]
     plt.legend(handles=legend_patches, bbox_to_anchor=(1.05, 1), loc='upper left')
 
     plt.title(f"{total_seats} Sandalyeli Meclis Temsili", fontsize=14)

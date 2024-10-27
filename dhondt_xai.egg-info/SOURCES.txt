@@ -1,8 +1,0 @@
-setup.py
-dhondt_xai/__init__.py
-dhondt_xai/dhondt_xai.py
-dhondt_xai.egg-info/PKG-INFO
-dhondt_xai.egg-info/SOURCES.txt
-dhondt_xai.egg-info/dependency_links.txt
-dhondt_xai.egg-info/requires.txt
-dhondt_xai.egg-info/top_level.txt

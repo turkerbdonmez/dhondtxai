@@ -1,0 +1,10 @@
+README.md
+setup.py
+dhondtxai/__init__.py
+dhondtxai/dhondt_xai.py
+dhondtxai/plot_parliament.py
+dhondtxai.egg-info/PKG-INFO
+dhondtxai.egg-info/SOURCES.txt
+dhondtxai.egg-info/dependency_links.txt
+dhondtxai.egg-info/requires.txt
+dhondtxai.egg-info/top_level.txt

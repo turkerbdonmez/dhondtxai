@@ -2,8 +2,8 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='dhondt_xai',
-    version='0.2',
+    name='dhondtxai',
+    version='0.6.1.4',
     packages=find_packages(),
     install_requires=[
         'numpy',
@@ -14,9 +14,9 @@ setup(
         # Random forest and AdaBoost are part of scikit-learn
     ],
     description="A library for applying D'Hondt method on feature importances from decision tree models",
-    author='Ali Furkan Kamanlı',
+    author='Türker Berk DÖNMEZ',
     author_email='furkan@example.com',
-    url='https://github.com/turkerbdonmez/dhondt-xai',
+    url='https://github.com/turkerbdonmez/dhondtxai',
     classifiers=[
         'Programming Language :: Python :: 3',
         'License :: OSI Approved :: MIT License',

@@ -13,7 +13,7 @@ The `DhondtXAI` library provides explainability tools for decision tree models, 
 ## Installation
 To install the library, use the following command:
 ```bash
-pip install dhondt-xai
+pip install dhondtxai
 ```
 
 ---
@@ -25,21 +25,21 @@ pip install dhondt-xai
 This example shows how to use the `DhondtXAI` class with a CatBoost model:
 
 ```python
-from dhondt_xai import DhondtXAI, plot_parliament
+from dhondtxai import DhondtXAI, plot_parliament
 
 # Initialize and train the model
-dhondt_xai = DhondtXAI(model)
-dhondt_xai.fit(X_train, y_train)
+dhondtxai = DhondtXAI(model)
+dhondtxai.fit(X_train, y_train)
 
 # Select feature alliances and exclusions
-alliances, exclude_features = dhondt_xai.select_features(X.columns)
+alliances, exclude_features = dhondtxai.select_features(X.columns)
 
 # Apply the D'Hondt method and allocate seats
-features, votes = dhondt_xai.apply_dhondt(num_votes, num_mps, threshold, alliances, exclude_features)
-seats = dhondt_xai.dhondt_method(votes, num_mps)
+features, votes = dhondtxai.apply_dhondt(num_votes, num_mps, threshold, alliances, exclude_features)
+seats = dhondtxai.dhondt_method(votes, num_mps)
 
 # Plot the results
-dhondt_xai.plot_results(features, seats)
+dhondtxai.plot_results(features, seats)
 plot_parliament(total_seats=num_mps, features=features, seats=seats)
 ```
 
@@ -50,7 +50,7 @@ Displays feature correlations:
 - **Red:** Negative correlation
 
 ```python
-dhondt_xai.plot_results(features, seats)
+dhondtxai.plot_results(features, seats)
 ```
 
 ### 3. Parliament Plot Visualization
