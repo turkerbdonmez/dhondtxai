@@ -2,14 +2,17 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='dhondt-xai',
+    name='dhondt_xai',
     version='0.1',
-    packages=find_packages(include=['dhondt_xai', 'dhondt_xai.*']),
-    install_requires=['numpy', 'matplotlib', 'xgboost'],
-    author='Your Name',
-    author_email='your.email@example.com',
-    description='A library for applying D'Hondt method to feature importances in decision tree models.',
-    url='https://github.com/yourusername/dhondt-xai',
+    packages=find_packages(),
+    install_requires=[
+        'numpy',
+        'matplotlib'
+    ],
+    description='A library for applying D'Hondt method on feature importances from decision tree models',
+    author='Ali Furkan Kamanlı',
+    author_email='your_email@example.com',
+    url='https://github.com/turkerbdonmez/dhondt-xai',
     classifiers=[
         'Programming Language :: Python :: 3',
         'License :: OSI Approved :: MIT License',
