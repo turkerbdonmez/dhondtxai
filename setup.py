@@ -3,15 +3,19 @@ from setuptools import setup, find_packages
 
 setup(
     name='dhondt_xai',
-    version='0.1',
+    version='0.2',
     packages=find_packages(),
     install_requires=[
         'numpy',
-        'matplotlib'
+        'matplotlib',
+        'xgboost',
+        'scikit-learn',
+        'catboost',
+        # Random forest and AdaBoost are part of scikit-learn
     ],
-    description='A library for applying D'Hondt method on feature importances from decision tree models',
+    description="A library for applying D'Hondt method on feature importances from decision tree models",
     author='Ali Furkan Kamanlı',
-    author_email='your_email@example.com',
+    author_email='furkan@example.com',
     url='https://github.com/turkerbdonmez/dhondt-xai',
     classifiers=[
         'Programming Language :: Python :: 3',
