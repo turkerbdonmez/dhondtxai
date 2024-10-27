@@ -1,6 +1,6 @@
 Metadata-Version: 2.1
 Name: dhondtxai
-Version: 0.6.1.4
+Version: 0.6.1.5
 Summary: A library for applying D'Hondt method on feature importances from decision tree models
 Home-page: https://github.com/turkerbdonmez/dhondtxai
 Author: Türker Berk DÖNMEZ
