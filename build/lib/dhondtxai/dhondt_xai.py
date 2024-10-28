@@ -59,7 +59,49 @@ class DhondtXAI:
         
         return alliances, exclude_features
 
+    
     def apply_dhondt(self, num_votes, num_mps, threshold=None, alliances=None, exclude_features=None):
+        # Exclude specified features if provided
+        features = [f for f in self.features if f not in exclude_features] if exclude_features else self.features
+        
+        # Allow dynamic alliance creation from feature names
+        feature_importances = self.feature_importances[:len(features)]
+        grouped_importances = []
+        grouped_features = []
+        used_features = set()
+
+        if alliances:
+            for alliance in alliances:
+                # Convert alliance names to feature names if provided as list of lists
+                alliance_features = [var.strip() for var in alliance if var.strip() in features]
+                if alliance_features:
+                    total_importance = sum(self.feature_importances[features.index(var)] for var in alliance_features)
+                    if total_importance > 0:
+                        alliance_name = ' + '.join(alliance_features)
+                        grouped_features.append(alliance_name)
+                        grouped_importances.append(total_importance)
+                        used_features.update(alliance_features)
+
+        # Add remaining individual features not in any alliance
+        for feature, importance in zip(features, feature_importances):
+            if feature not in used_features:
+                grouped_features.append(feature)
+                grouped_importances.append(importance)
+
+        grouped_importances = np.array(grouped_importances)
+        
+        # Calculate votes per feature/alliance
+        votes_per_feature = (grouped_importances / grouped_importances.sum()) * num_votes
+
+        # Apply threshold if specified, but do not zero out votes; instead, track excluded features
+        if threshold is not None:
+            threshold_votes = (threshold / 100) * num_votes
+            excluded_features = np.where(votes_per_feature < threshold_votes, True, False)
+        else:
+            excluded_features = np.full_like(votes_per_feature, False, dtype=bool)
+
+        return grouped_features, votes_per_feature, excluded_features
+
         # Exclude specified features if provided
         features = [f for f in self.features if f not in exclude_features] if exclude_features else self.features
         
@@ -104,7 +146,15 @@ class DhondtXAI:
 
         return grouped_features, votes_per_feature
     
-    def dhondt_method(self, votes, num_mps):
+    
+    def dhondt_method(self, votes, num_mps, excluded_features):
+        seats = np.zeros(len(votes), dtype=int)
+        for _ in range(num_mps):
+            quotients = np.where(excluded_features, -1, votes / (seats + 1))  # Set excluded feature quotients to -1 to ignore them
+            max_index = np.argmax(quotients)
+            seats[max_index] += 1
+        return seats
+
         seats = np.zeros(len(votes), dtype=int)
         for _ in range(num_mps):
             quotients = votes / (seats + 1)

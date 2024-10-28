@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='dhondtxai',
-    version='0.6.1.5',
+    version='0.6.2',
     packages=find_packages(),
     install_requires=[
         'numpy',
