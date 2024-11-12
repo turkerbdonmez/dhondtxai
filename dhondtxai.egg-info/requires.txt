@@ -1,5 +1,0 @@
-numpy
-matplotlib
-xgboost
-scikit-learn
-catboost

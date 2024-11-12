@@ -6,11 +6,11 @@ from sklearn.model_selection import train_test_split
 from dhondtxai import DhondtXAI, plot_parliament  # Import the DhondtXAI class and plot_parliament function
 
 # Load the dataset
-data = pd.read_csv('/content/drive/MyDrive/glioma/TCGA_InfoWithGrade.csv')  # Adjust the path according to your setup
+data = pd.read_csv('/path/to/data.csv')  # Adjust the path according to your setup
 
 # Separate the features and the target variable
-X = data.drop(['Grade'], axis=1)  # Assuming 'Grade' is the target variable
-y = data['Grade']
+X = data.drop(['Target'], axis=1)  # Assuming 'Target' is the target variable
+y = data['Target']
 
 # Split the dataset into training and testing sets
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
@@ -28,9 +28,9 @@ dhondtxai.fit(X_train, y_train)
 alliances, exclude_features = dhondtxai.select_features(X.columns)
 
 # Specify parameters for the D'Hondt method dynamically
-num_votes = int(input("Toplam oy sayısını girin: "))
-num_mps = int(input("Toplam vekil sayısını girin: "))
-threshold_input = input("Eşik değerini (yüzde olarak) girin veya 'None' yazın: ")
+num_votes = int(input("Enter the total number of votes: "))
+num_mps = int(input("Enter the total number of MPs: "))
+threshold_input = input("Enter the threshold value (in percentage) or type 'none': ")
 threshold = None if threshold_input.lower() == 'none' else float(threshold_input)
 
 # Apply the D'Hondt method
@@ -63,6 +63,6 @@ plot_parliament(
     total_seats=num_mps,
     features=features,
     seats=seats,
-    slices=50,  # Customize the number of slices for visualization
-    additional_rows=5  # Adjust inner space rows if needed
+    slices=30,  # Customize the number of slices for visualization
+    additional_rows=10  # Adjust inner space rows if needed
 )

@@ -25,7 +25,7 @@ class DhondtXAI:
             print(f"{idx + 1}. {feature}")
 
         # Allow user to specify features to exclude from the evaluation
-        exclude_input = input("Enter the variables you want to exclude from the evaluation (e.g., '2, 4' or 'HL, CVD') or 'none': ")
+        exclude_input = input("Enter the variables you want to exclude from the evaluation (e.g., '2, 4' or 'var2, var4') or 'none': ")
         exclude_features = []
         if exclude_input.lower() != 'none':
             exclude_parts = exclude_input.split(',')
@@ -39,7 +39,7 @@ class DhondtXAI:
                     exclude_features.append(var)
 
         # Allow user to enter alliances using feature names or index numbers
-        alliances_input = input("Enter any alliances between the variables (e.g., '2,3 and 4' or 'HL,HLmed and CVD') or 'none': ")
+        alliances_input = input("Enter any alliances between the variables (e.g., '2,3 and 4' or 'var2, var3 and var4') or 'none': ")
         alliances = []
         if alliances_input.lower() != 'none':
             alliance_parts = alliances_input.split(', ')

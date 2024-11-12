@@ -97,8 +97,8 @@ def plot_parliament(total_seats, features, seats, slices=50, additional_rows=5):
     plt.tight_layout()
 
     # Legend Creation - Özelliklerin sıralaması ve renklerle uyumu sağla
-    legend_patches = [plt.Rectangle((0, 0), 1, 1, color=feature_colors[feature], label=f"{feature} ({seats[features.index(feature)]} MV)") for feature in sorted_features]
+    legend_patches = [plt.Rectangle((0, 0), 1, 1, color=feature_colors[feature], label=f"{feature} ({seats[features.index(feature)]} MPs)") for feature in sorted_features]
     plt.legend(handles=legend_patches, bbox_to_anchor=(1.05, 1), loc='upper left')
 
-    plt.title(f"{total_seats} Sandalyeli Meclis Temsili", fontsize=14)
+    plt.title(f"{total_seats}-Seat Parliamentary Representation", fontsize=14)
     plt.show()
