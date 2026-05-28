@@ -37,7 +37,7 @@ def main():
 
     model = LinearModel(weights)
     explainer = DhondtXAI(model, background_data=background, output_type="prediction", random_state=42)
-    explanation = explainer.explain(x, n_background=100, allocation_seats=10000, random_state=42)
+    explanation = explainer.explain(x, n_background=len(background), allocation_seats=10000, random_state=42)
 
     expected = weights * (x.to_numpy(dtype=float) - background.mean(axis=0).to_numpy(dtype=float))
     frame = pd.DataFrame(

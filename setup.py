@@ -5,7 +5,7 @@ from setuptools import setup, find_packages
 
 
 ROOT = Path(__file__).resolve().parent
-VERSION = "0.9.3"
+VERSION = "0.9.5.5"
 README = (ROOT / "README.md").read_text(encoding="utf-8")
 
 setup(
@@ -25,12 +25,12 @@ setup(
         'catboost': ['catboost'],
         'torch': ['torch'],
         'all-models': ['scikit-learn', 'xgboost', 'lightgbm', 'catboost', 'torch'],
-        'dev': ['pytest', 'scikit-learn'],
+        'dev': ['pytest', 'scikit-learn', 'build', 'twine'],
     },
-    description="SHAP-independent D'Hondt-projected removal-effect attributions for tabular XAI",
+    description="D'Hondt-projected removal-effect attributions for tabular XAI",
     long_description=README,
     long_description_content_type="text/markdown",
-    author='Türker Berk DÖNMEZ',
+    author='Turker Berk Donmez',
     author_email='turkerberkdonmez@yahoo.com',
     url='https://github.com/turkerbdonmez/dhondtxai',
     license='MIT',

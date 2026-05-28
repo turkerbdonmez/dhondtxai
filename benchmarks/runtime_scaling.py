@@ -33,17 +33,30 @@ def main():
         x = pd.Series(rng.normal(size=feature_count), index=columns)
         explainer = DhondtXAI(SumModel(), background_data=background, output_type="prediction")
 
-        start = perf_counter()
-        explanation = explainer.explain(x, n_background=50, allocation_seats=5000, random_state=123)
-        elapsed = perf_counter() - start
-        rows.append(
-            {
-                "feature_count": feature_count,
-                "elapsed_seconds": elapsed,
-                "projection_residual_ratio": explanation.projection_residual_ratio,
-                "completeness_error": abs(sum(explanation.feature_attributions.values()) - explanation.delta),
-            }
-        )
+        for alliance_mode, affinity_mode in [
+            ("none", "same_direction"),
+            ("auto", "absolute_interaction"),
+        ]:
+            start = perf_counter()
+            explanation = explainer.explain(
+                x,
+                n_background=50,
+                allocation_seats=5000,
+                random_state=123,
+                alliance_mode=alliance_mode,
+                affinity_mode=affinity_mode,
+            )
+            elapsed = perf_counter() - start
+            rows.append(
+                {
+                    "feature_count": feature_count,
+                    "alliance_mode": alliance_mode,
+                    "affinity_mode": affinity_mode,
+                    "elapsed_seconds": elapsed,
+                    "projection_residual_ratio": explanation.projection_residual_ratio,
+                    "completeness_error": abs(sum(explanation.feature_attributions.values()) - explanation.delta),
+                }
+            )
 
     output_dir = Path(__file__).resolve().parent / "results"
     output_dir.mkdir(parents=True, exist_ok=True)

@@ -78,6 +78,13 @@ def main():
         random_state=42,
         n_background=30,
         seats=100,
+        alliance_mode="user",
+        user_alliances=[
+            ["mean concavity", "mean concave points"],
+            ["worst concavity", "worst concave points"],
+            ["mean radius", "mean perimeter", "mean area"],
+            ["worst radius", "worst perimeter", "worst area"],
+        ],
     )
 
     fig, _ = explainer.plot_global_importance(global_frame, top_k=15, show=False)

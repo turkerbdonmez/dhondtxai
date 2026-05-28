@@ -1,9 +1,12 @@
 import math
-import random
-
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import numpy as np
+
+
+def _validate_language(language):
+    if language != "en":
+        raise ValueError("Only English output is supported.")
 
 
 def plot_parliament(
@@ -17,7 +20,10 @@ def plot_parliament(
     snap_seats=True,
     seat_step="auto",
     max_legend_items=12,
+    inner_radius_ratio=0.26,
     empty_message="No eligible D'Hondt seats",
+    quality_note=None,
+    language="en",
     show=True,
 ):
     """Plot a semicircular parliament view.
@@ -30,6 +36,9 @@ def plot_parliament(
 
     if len(features) != len(seats):
         raise ValueError("Number of features and seats must match.")
+    _validate_language(language)
+    if np.any(seats < 0):
+        raise ValueError("seats must be non-negative.")
     requested_total_seats = int(total_seats)
     if total_seats < int(seats.sum()):
         total_seats = int(seats.sum())
@@ -59,36 +68,40 @@ def plot_parliament(
     order = np.argsort(-display_seats)
     sorted_features = [features[index] for index in order if int(display_seats[index]) > 0]
 
-    pieces_per_slice_without_additional = max(1, math.ceil(display_total_seats / slices))
-    pieces_per_slice = pieces_per_slice_without_additional + additional_rows
+    effective_slices = int(slices) + max(0, int(additional_rows))
+    seat_rows = max(1, math.ceil(display_total_seats / effective_slices))
     angle_gap = 0.2
-    radial_angles = np.linspace(180, 0, slices + 1)
+    radial_angles = np.linspace(180, 0, effective_slices + 1)
 
-    fig, ax = plt.subplots(figsize=(14, 8))
     radius = 10
-    piece_depth = radius / pieces_per_slice
-    start_radius = piece_depth * additional_rows
-
-    current_feature = 0
-    remaining_seats = int(display_seats[features.index(sorted_features[current_feature])]) if sorted_features else 0
-    current_color = feature_colors[sorted_features[current_feature]] if sorted_features else "tab:gray"
-    total_assigned_seats = 0
+    inner_radius_ratio = float(inner_radius_ratio)
+    if not 0 <= inner_radius_ratio < 0.75:
+        raise ValueError("inner_radius_ratio must be in [0, 0.75).")
+    start_radius = radius * inner_radius_ratio
+    piece_depth = (radius - start_radius) / seat_rows
 
     if not sorted_features or int(display_seats.sum()) <= 0:
         fig, ax = plt.subplots(figsize=(10, 5))
         ax.axis("off")
         ax.text(0.5, 0.5, empty_message, transform=ax.transAxes, ha="center", va="center", fontsize=13)
-        ax.set_title(title or f"{requested_total_seats}-Seat Parliamentary Representation", fontsize=14)
+        empty_title = title or f"{requested_total_seats}-Seat Parliamentary Representation"
+        ax.set_title(empty_title, fontsize=14)
         fig.tight_layout()
         if show:
             plt.show()
         return fig, ax
 
-    for slice_index in range(slices):
+    fig, ax = plt.subplots(figsize=(14, 8))
+    current_feature = 0
+    remaining_seats = int(display_seats[features.index(sorted_features[current_feature])]) if sorted_features else 0
+    current_color = feature_colors[sorted_features[current_feature]] if sorted_features else "tab:gray"
+    total_assigned_seats = 0
+
+    for slice_index in range(effective_slices):
         start_angle = radial_angles[slice_index] - angle_gap / 2
         end_angle = radial_angles[slice_index + 1] + angle_gap / 2
 
-        for piece in range(additional_rows, pieces_per_slice):
+        for piece in range(seat_rows):
             if total_assigned_seats >= int(display_seats.sum()):
                 break
 
@@ -100,7 +113,7 @@ def plot_parliament(
             if remaining_seats == 0:
                 break
 
-            inner_radius = start_radius + (piece - additional_rows) * piece_depth
+            inner_radius = start_radius + piece * piece_depth
             outer_radius = inner_radius + piece_depth - 0.05
             wedge = patches.Wedge(
                 (0, 0),
@@ -120,16 +133,18 @@ def plot_parliament(
 
     extended_radius = radius + 1
     for angle in radial_angles:
+        x_start = start_radius * np.cos(np.radians(angle))
+        y_start = start_radius * np.sin(np.radians(angle))
         x_end = extended_radius * np.cos(np.radians(angle))
         y_end = extended_radius * np.sin(np.radians(angle))
-        ax.plot([0, x_end], [0, y_end], color="white", linewidth=3, zorder=3, clip_on=False)
+        ax.plot([x_start, x_end], [y_start, y_end], color="white", linewidth=2.4, zorder=3, clip_on=False)
 
-    for piece in range(additional_rows, pieces_per_slice + 1):
-        r = start_radius + (piece - additional_rows) * piece_depth - 0.05
+    for piece in range(seat_rows + 1):
+        r = start_radius + piece * piece_depth - 0.05
         theta = np.linspace(180 + angle_gap / 2, 0 - angle_gap / 2, 300)
         x = r * np.cos(np.radians(theta))
         y = r * np.sin(np.radians(theta))
-        ax.plot(x, y, color="white", linewidth=3, zorder=2, clip_on=False)
+        ax.plot(x, y, color="white", linewidth=2.4, zorder=2, clip_on=False)
 
     ax.set_xlim(-extended_radius - 0.5, extended_radius + 0.5)
     ax.set_ylim(0, extended_radius + 0.5)
@@ -139,10 +154,15 @@ def plot_parliament(
     legend_patches = []
     for feature in sorted_features[:max_legend_items]:
         seat_count = int(display_seats[features.index(feature)])
+        original_seat_count = int(seats[features.index(feature)])
         if seat_count <= 0:
             continue
+        if seat_count != original_seat_count:
+            label = f"{feature} ({original_seat_count} seats, shown {seat_count})"
+        else:
+            label = f"{feature} ({seat_count} seats)"
         legend_patches.append(
-            plt.Rectangle((0, 0), 1, 1, color=feature_colors[feature], label=f"{feature} ({seat_count} seats)")
+            plt.Rectangle((0, 0), 1, 1, color=feature_colors[feature], label=label)
         )
     if len(sorted_features) > max_legend_items:
         hidden_count = len(sorted_features) - max_legend_items
@@ -154,8 +174,21 @@ def plot_parliament(
 
     title_text = title or f"{requested_total_seats}-Seat Parliamentary Representation"
     if display_total_seats != requested_total_seats:
-        title_text = f"{title_text}\nvisualized as {display_total_seats} seats for readability"
+        suffix = f"visualized as {display_total_seats} seats for readability"
+        title_text = f"{title_text}\n{suffix}"
     ax.set_title(title_text, fontsize=14)
+    if quality_note:
+        ax.text(
+            0.01,
+            0.98,
+            quality_note,
+            transform=ax.transAxes,
+            va="top",
+            ha="left",
+            fontsize=9,
+            color="darkred",
+            bbox={"boxstyle": "round,pad=0.25", "facecolor": "white", "edgecolor": "darkred"},
+        )
     fig.tight_layout()
     if show:
         plt.show()
@@ -171,41 +204,48 @@ def plot_signed_parliament(
     snap_seats=True,
     seat_step="auto",
     max_legend_items=12,
+    palette="signed",
+    inner_radius_ratio=0.26,
+    language="en",
     show=True,
 ):
     """Plot positive, negative, or combined DhondtXAI seats."""
     if mode not in {"signed", "positive", "negative"}:
         raise ValueError("mode must be signed, positive, or negative.")
+    if palette not in {"signed", "distinct", "positive_negative"}:
+        raise ValueError("palette must be 'signed', 'distinct', or 'positive_negative'.")
+    _validate_language(language)
 
     names = explanation.eligible_alliances
     if mode == "positive":
         seats = [explanation.positive_seats.get(name, 0) for name in names]
-        colors = _blue_scale(len(names))
         labels = names
+        signs = ["positive"] * len(labels)
         title = "DhondtXAI Positive Evidence Parliament"
     elif mode == "negative":
         seats = [explanation.negative_seats.get(name, 0) for name in names]
-        colors = _red_scale(len(names))
         labels = names
+        signs = ["negative"] * len(labels)
         title = "DhondtXAI Negative Evidence Parliament"
     else:
         labels = []
         seats = []
-        colors = []
-        blue_colors = _blue_scale(len(names))
-        red_colors = _red_scale(len(names))
+        signs = []
         for index, name in enumerate(names):
             positive = explanation.positive_seats.get(name, 0)
             negative = explanation.negative_seats.get(name, 0)
             if positive > 0:
                 labels.append(f"{name} (+)")
                 seats.append(positive)
-                colors.append(blue_colors[index])
+                signs.append("positive")
             if negative > 0:
                 labels.append(f"{name} (-)")
                 seats.append(negative)
-                colors.append(red_colors[index])
+                signs.append("negative")
         title = "DhondtXAI Signed Evidence Parliament"
+
+    colors = _palette_colors(labels, signs, palette)
+    quality_note = _quality_note(explanation, language)
 
     total = int(sum(seats))
     if total <= 0:
@@ -223,44 +263,124 @@ def plot_signed_parliament(
         snap_seats=snap_seats,
         seat_step=seat_step,
         max_legend_items=max_legend_items,
+        inner_radius_ratio=inner_radius_ratio,
+        quality_note=quality_note,
+        language=language,
         show=show,
     )
 
 
 def _default_colors(count):
+    # A compact Glasbey-style qualitative palette. The early colors are chosen
+    # for high perceptual separation, and later colors are generated by
+    # golden-angle hue rotation to stay usable when the number of groups grows.
     colors = [
-        "tab:red",
-        "tab:blue",
-        "tab:green",
-        "tab:orange",
-        "tab:purple",
-        "tab:cyan",
-        "tab:pink",
-        "tab:olive",
-        "gold",
-        "teal",
+        "#0072B2",
+        "#D55E00",
+        "#009E73",
+        "#CC79A7",
+        "#F0E442",
+        "#56B4E9",
+        "#E69F00",
+        "#332288",
+        "#88CCEE",
+        "#44AA99",
+        "#117733",
+        "#999933",
+        "#DDCC77",
+        "#CC6677",
+        "#882255",
+        "#AA4499",
+        "#661100",
+        "#6699CC",
+        "#AA4466",
+        "#4477AA",
+        "#228833",
+        "#EE6677",
+        "#BBBBBB",
+        "#000000",
     ]
     if count > len(colors):
-        import matplotlib.colors as mcolors
-
-        extra = list(mcolors.CSS4_COLORS.values())
-        random.Random(42).shuffle(extra)
-        colors += extra[: count - len(colors)]
+        colors += [_golden_angle_color(index) for index in range(count - len(colors))]
     return colors[:count]
 
 
-def _blue_scale(count):
-    if count <= 0:
-        return []
-    cmap = plt.get_cmap("Blues")
-    return [cmap(0.45 + 0.45 * (index / max(count - 1, 1))) for index in range(count)]
+def _palette_colors(labels, signs, palette):
+    labels = list(labels)
+    signs = list(signs)
+    if palette == "distinct":
+        return _default_colors(len(labels))
+
+    positive = _positive_colors(max(1, signs.count("positive")))
+    negative = _negative_colors(max(1, signs.count("negative")))
+    pos_i = 0
+    neg_i = 0
+    colors = []
+    for sign in signs:
+        if sign == "negative":
+            colors.append(negative[neg_i % len(negative)])
+            neg_i += 1
+        else:
+            colors.append(positive[pos_i % len(positive)])
+            pos_i += 1
+    return colors
 
 
-def _red_scale(count):
-    if count <= 0:
-        return []
-    cmap = plt.get_cmap("Reds")
-    return [cmap(0.45 + 0.45 * (index / max(count - 1, 1))) for index in range(count)]
+def _positive_colors(count):
+    colors = [
+        "#0072B2",
+        "#009E73",
+        "#56B4E9",
+        "#44AA99",
+        "#332288",
+        "#117733",
+        "#6699CC",
+        "#4477AA",
+        "#228833",
+        "#88CCEE",
+    ]
+    if count > len(colors):
+        colors += [_golden_angle_color(index) for index in range(count - len(colors))]
+    return colors[:count]
+
+
+def _negative_colors(count):
+    colors = [
+        "#D55E00",
+        "#CC6677",
+        "#882255",
+        "#E69F00",
+        "#AA4466",
+        "#AA4499",
+        "#661100",
+        "#EE6677",
+        "#CC79A7",
+        "#999933",
+    ]
+    if count > len(colors):
+        colors += [_golden_angle_color(index + 97) for index in range(count - len(colors))]
+    return colors[:count]
+
+
+def _quality_note(explanation, language):
+    _validate_language(language)
+    ratio = getattr(explanation, "projection_residual_ratio", 0.0)
+    bucket = getattr(explanation, "projection_residual_attribution", 0.0)
+    if ratio < 0.10 and abs(bucket) <= 1e-12:
+        return None
+    if ratio >= 0.50:
+        return f"Caution: high projection correction ({ratio:.0%})."
+    return f"Projection correction: {ratio:.0%}."
+
+
+def _golden_angle_color(index):
+    import colorsys
+
+    hue = (0.61803398875 * (index + 1)) % 1.0
+    saturation = 0.72
+    value = 0.86 if index % 2 == 0 else 0.70
+    red, green, blue = colorsys.hsv_to_rgb(hue, saturation, value)
+    return "#{:02x}{:02x}{:02x}".format(int(red * 255), int(green * 255), int(blue * 255))
 
 
 def _recommended_seat_count(total_seats, seat_step="auto"):

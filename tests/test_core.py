@@ -1,4 +1,6 @@
 import sys
+import types
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -7,6 +9,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 
+import dhondtxai as dxai
 from dhondtxai import DhondtValues, DhondtXAI, Explainer, __version__
 
 
@@ -73,6 +76,19 @@ class LabelModel:
         return np.array(["yes"] * len(X))
 
 
+class NaNModel:
+    def predict(self, X):
+        values = np.asarray(X, dtype=float).sum(axis=1)
+        values[0] = np.nan
+        return values
+
+
+class ProductModel:
+    def predict(self, X):
+        arr = np.asarray(X, dtype=float)
+        return arr[:, 0] * arr[:, 1]
+
+
 class KerasLikeModel:
     def predict(self, X, verbose=0):
         return np.asarray(X).sum(axis=1)
@@ -82,6 +98,12 @@ class SingleColumnProbabilityModel:
     def predict(self, X, verbose=0):
         probabilities = np.clip(np.asarray(X).sum(axis=1) / 10.0, 0.0, 1.0)
         return probabilities.reshape(-1, 1)
+
+
+class InvalidProbabilityModel:
+    def predict_proba(self, X):
+        values = np.asarray(X).sum(axis=1) + 2.0
+        return np.column_stack([1.0 - values, values])
 
 
 def make_add_explainer():
@@ -185,6 +207,34 @@ def test_opposite_sign_members_in_user_alliance_keep_signs():
     )
     assert explanation.feature_attributions["a"] > 0
     assert explanation.feature_attributions["b"] < 0
+    assert explanation.diagnostics()["mixed_sign_alliance_count"] == 1
+    assert "both supporting and opposing" in explanation.summary()
+
+
+def test_plain_summary_is_shorter_and_less_technical_than_standard_summary():
+    explainer = make_add_explainer()
+    explanation = explainer.explain(pd.Series({"a": 1.0, "b": -2.0, "c": 0.0}), n_background=5)
+    plain = explanation.summary(style="plain")
+    standard = explanation.summary(style="standard")
+    assert "DhondtXAI explanation" in plain
+    assert "Diagnostics:" not in plain
+    assert len(plain.splitlines()) < len(standard.splitlines())
+
+
+def test_local_explanation_values_keep_original_feature_order_with_user_alliances():
+    background = pd.DataFrame({"a": [0.0] * 5, "b": [0.0] * 5, "c": [0.0] * 5})
+    explainer = DhondtXAI(AddModel(), background_data=background, output_type="prediction")
+
+    explanation = explainer.explain(
+        pd.Series({"a": 1.0, "b": 2.0, "c": 3.0}),
+        alliance_mode="user",
+        user_alliances=[["b", "a"]],
+        n_background=5,
+        allocation_seats=1000,
+    )
+
+    assert explanation.feature_names == ["a", "b", "c"]
+    assert explanation.values.tolist() == pytest.approx([1.0, 2.0, 3.0])
 
 
 def test_global_output_keeps_residual_rows():
@@ -207,6 +257,40 @@ def test_global_output_keeps_residual_rows():
     assert residual["is_residual"]
     assert residual["global_abs"] == pytest.approx(1.0)
     assert np.isnan(residual["threshold_survival"])
+
+
+def test_to_shap_includes_residuals_by_default(monkeypatch):
+    class FakeExplanation:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    monkeypatch.setitem(sys.modules, "shap", types.SimpleNamespace(Explanation=FakeExplanation))
+    explainer = make_add_explainer()
+    explanation = explainer.explain(
+        pd.Series({"a": 1.0, "b": 2.0, "c": 0.0}),
+        exclude_features=["c"],
+        n_background=5,
+    )
+    shap_exp = explanation.to_shap()
+    assert "__excluded__" in shap_exp.feature_names
+    assert float(shap_exp.base_values + np.sum(shap_exp.values)) == pytest.approx(explanation.score)
+
+
+def test_values_to_shap_includes_residuals_by_default(monkeypatch):
+    class FakeExplanation:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    monkeypatch.setitem(sys.modules, "shap", types.SimpleNamespace(Explanation=FakeExplanation))
+    explainer = make_add_explainer()
+    values = explainer.dhondtxai_values(
+        pd.Series({"a": 1.0, "b": 2.0, "c": 0.0}),
+        exclude_features=["c"],
+        n_background=5,
+    )
+    shap_exp = values.to_shap()
+    assert "__excluded__" in shap_exp.feature_names
+    assert float(shap_exp.base_values + np.sum(shap_exp.values)) == pytest.approx(values.scores)
 
 
 def test_invalid_class_index_raises():
@@ -297,6 +381,25 @@ def test_multioutput_prediction_target_index():
     assert explanation.delta == pytest.approx(5.0)
 
 
+def test_regression_task_maps_integer_target_to_target_index_with_auto_output():
+    background = pd.DataFrame({"a": [0.0, 0.0], "b": [0.0, 0.0]})
+    explainer = DhondtXAI(MultiOutputModel(), background_data=background, task="regression", target=1)
+    explanation = explainer.explain(pd.Series({"a": 1.0, "b": 2.0}), allocation_seats=1000)
+    assert explanation.target_index == 1
+    assert explanation.class_index is None
+    assert explanation.score == pytest.approx(5.0)
+
+
+def test_auto_prediction_integer_target_maps_to_target_index_for_multioutput_model():
+    background = pd.DataFrame({"a": [0.0, 0.0], "b": [0.0, 0.0]})
+    explainer = DhondtXAI(MultiOutputModel(), background_data=background, target=1)
+    explanation = explainer.explain(pd.Series({"a": 1.0, "b": 2.0}), allocation_seats=1000)
+    assert explanation.resolved_output_type == "prediction"
+    assert explanation.target_index == 1
+    assert explanation.class_index is None
+    assert explanation.score == pytest.approx(5.0)
+
+
 def test_single_column_2d_prediction_defaults_to_first_target():
     background = pd.DataFrame({"a": [0.0, 0.0], "b": [0.0, 0.0]})
     explainer = DhondtXAI(SingleColumn2DModel(), background_data=background, output_type="prediction")
@@ -357,6 +460,45 @@ def test_reserved_feature_display_names_raise():
         DhondtXAI(AddModel(), background_data=pd.DataFrame({"__excluded__": [0.0]}), output_type="prediction")
 
 
+def test_duplicate_feature_names_raise_clear_error():
+    background = pd.DataFrame(np.zeros((2, 2)), columns=["a", "a"])
+    with pytest.raises(ValueError, match="unique"):
+        DhondtXAI(AddModel(), background_data=background, output_type="prediction")
+
+
+def test_nan_model_output_raises_clear_error():
+    background = pd.DataFrame({"a": [0.0, 1.0], "b": [0.0, 1.0]})
+    explainer = DhondtXAI(NaNModel(), background_data=background, output_type="prediction")
+    with pytest.raises(ValueError, match="NaN or infinite"):
+        explainer.explain(pd.Series({"a": 1.0, "b": 1.0}))
+
+
+def test_class_index_none_binary_probability_is_normalized():
+    background = pd.DataFrame({"a": [0.0, 0.0], "b": [0.0, 0.0]})
+    explainer = DhondtXAI(ProbaModel(), background_data=background, output_type="probability", class_index=None)
+    explanation = explainer.explain(pd.Series({"a": 1.0, "b": 2.0}), n_background=2)
+    assert explanation.class_index == 1
+    assert explanation.class_label == 1
+    assert np.isfinite(explanation.score)
+
+
+def test_dhondt_rejects_negative_and_nonfinite_votes():
+    background = pd.DataFrame({"a": [0.0], "b": [0.0]})
+    explainer = DhondtXAI(AddModel(), background_data=background, output_type="prediction")
+    with pytest.raises(ValueError, match="non-negative"):
+        explainer.dhondt_method([1.0, -1.0], 10)
+    with pytest.raises(ValueError, match="finite"):
+        explainer.dhondt_method([1.0, np.nan], 10)
+
+
+def test_dhondt_scale_invariance_for_tiny_votes():
+    background = pd.DataFrame({"a": [0.0], "b": [0.0], "c": [0.0]})
+    explainer = DhondtXAI(AddModel(), background_data=background, output_type="prediction")
+    base = explainer.dhondt_method([1.0, 2.0, 5.0], 50)
+    tiny = explainer.dhondt_method([1e-13, 2e-13, 5e-13], 50)
+    assert tiny.tolist() == base.tolist()
+
+
 def test_conditional_knn_perturbation_uses_local_neighbors():
     background = pd.DataFrame(
         {
@@ -405,6 +547,68 @@ def test_absolute_interaction_affinity_can_capture_pure_interaction():
         "absolute_interaction",
     )
     assert affinity[("a", "b")] > 0.9
+
+
+def test_projection_auto_uses_residual_bucket_when_raw_evidence_is_zero():
+    background = pd.DataFrame({"a": [0.0, 2.0], "b": [2.0, 0.0]})
+    explainer = DhondtXAI(ProductModel(), background_data=background, output_type="prediction")
+    explanation = explainer.explain(
+        pd.Series({"a": 1.0, "b": 1.0}),
+        n_background=2,
+        random_state=0,
+        projection_mode="auto",
+    )
+    assert explanation.feature_attributions["a"] == pytest.approx(0.0)
+    assert explanation.feature_attributions["b"] == pytest.approx(0.0)
+    assert explanation.feature_attributions["__projection_residual__"] == pytest.approx(explanation.delta)
+    assert explanation.projection_residual_ratio == pytest.approx(1.0)
+
+
+def test_projection_auto_uses_residual_bucket_when_ratio_is_high():
+    explainer = make_add_explainer()
+    projected, raw_sum, residual, ratio, bucket = explainer._project_values(
+        {"a": 0.90, "b": 0.0},
+        target=1.0,
+        names=["a", "b"],
+        mode="auto",
+        residual_name="__projection_residual__",
+        residual_threshold=0.05,
+    )
+    assert projected == {"a": pytest.approx(0.90), "b": pytest.approx(0.0)}
+    assert raw_sum == pytest.approx(0.90)
+    assert residual == pytest.approx(0.10)
+    assert ratio == pytest.approx(0.10)
+    assert bucket == pytest.approx(0.10)
+
+
+def test_strict_exclusion_keeps_interaction_with_excluded_in_residual():
+    background = pd.DataFrame({"a": [0.0, 0.0], "b": [0.0, 0.0]})
+    explainer = DhondtXAI(ProductModel(), background_data=background, output_type="prediction")
+    explanation = explainer.explain(
+        pd.Series({"a": 1.0, "b": 1.0}),
+        exclude_features=["a"],
+        n_background=2,
+        exclude_mode="strict",
+    )
+    assert explanation.feature_attributions["b"] == pytest.approx(0.0)
+    assert explanation.feature_attributions["__excluded__"] == pytest.approx(1.0)
+
+
+def test_strict_threshold_keeps_interaction_with_below_threshold_in_residual():
+    background = pd.DataFrame({"a": [0.0, 0.0], "b": [0.0, 0.0]})
+    explainer = DhondtXAI(ProductModel(), background_data=background, output_type="prediction")
+    explanation = explainer.explain(
+        pd.Series({"a": 1.0, "b": 1.0}),
+        threshold=0.99,
+        redistribute=False,
+        n_background=2,
+        threshold_mode="strict_residual",
+    )
+    assert explanation.feature_attributions["__below_threshold__"] == pytest.approx(1.0)
+    feature_mass = explanation.feature_attributions["a"] + explanation.feature_attributions["b"]
+    assert feature_mass == pytest.approx(1.0)
+    assert explanation.feature_attributions["__projection_residual__"] == pytest.approx(-1.0)
+    assert sum(explanation.feature_attributions.values()) == pytest.approx(explanation.delta)
 
 
 def test_dhondt_tie_break_modes_are_explicit():
@@ -485,7 +689,11 @@ def test_non_numeric_prediction_error_is_clear():
 
 def test_compatibility_checker_reports_success():
     background = pd.DataFrame({"a": [0.0, 0.0], "b": [0.0, 0.0]})
-    explainer = DhondtXAI(predict_fn=lambda X: np.asarray(X).sum(axis=1), background_data=background, output_type="custom")
+    explainer = DhondtXAI(
+        predict_fn=lambda X: np.asarray(X).sum(axis=1),
+        background_data=background,
+        output_type="custom",
+    )
     report = explainer.check_model_compatibility()
     assert report["compatible"] is True
     assert report["numeric"] is True
@@ -496,14 +704,30 @@ def test_compatibility_checker_reports_success():
 def test_compatibility_checker_works_with_x_sample_without_background():
     X_sample = pd.DataFrame({"a": [1.0, 2.0], "b": [3.0, 4.0]})
     explainer = DhondtXAI(AddModel(), output_type="prediction")
-    report = explainer.check_model_compatibility(X_sample=X_sample)
+    report = explainer.check_model_compatibility(X_sample=X_sample, deep=True)
     assert report["compatible"] is True
     assert report["selected_output_shape"] == (2,)
+    assert report["deep_check"] == "Full mini explanation path succeeded."
     assert explainer.features is None
 
 
 def test_package_version_exposed():
-    assert __version__ == "0.9.3"
+    assert __version__ == "0.9.5.5"
+
+
+def test_public_strings_do_not_use_non_ascii_locale_characters():
+    forbidden = {chr(code) for code in (305, 287, 252, 351, 246, 231, 304, 286, 220, 350, 214, 199)}
+    root = Path(__file__).resolve().parents[1]
+    paths = [
+        *Path(root, "dhondtxai").rglob("*.py"),
+        Path(root, "README.md"),
+        Path(root, "setup.py"),
+        Path(root, "CITATION.cff"),
+        Path(root, "LICENSE"),
+    ]
+    for path in paths:
+        text = path.read_text(encoding="utf-8").lower()
+        assert not any(char in text for char in forbidden), str(path)
 
 
 def test_shap_like_explainer_values_api():
@@ -521,6 +745,57 @@ def test_shap_like_explainer_values_api():
     assert dhondtxai_values.base_values.shape == (1,)
     assert dhondtxai_values[0].dhondtxai_values.shape == (3,)
     assert dhondtxai_values[0].base_value == pytest.approx(dhondtxai_values.base_values[0])
+
+
+def test_independent_masker_can_supply_background_data():
+    import dhondtxai as dxai
+
+    background = pd.DataFrame({"a": [0.0] * 5, "b": [0.0] * 5})
+    masker = dxai.maskers.Independent(background)
+    explainer = dxai.Explainer(AddModel(), masker=masker, output_type="prediction")
+    explanation = explainer.explain(pd.Series({"a": 1.0, "b": 2.0}), n_background=5)
+    assert explanation.delta == pytest.approx(3.0)
+
+
+def test_masker_max_samples_controls_default_background_rows():
+    import dhondtxai as dxai
+
+    background = pd.DataFrame({"a": [0.0] * 10, "b": [0.0] * 10})
+    masker = dxai.maskers.Independent(background, max_samples=3)
+    explainer = dxai.Explainer(AddModel(), masker=masker, output_type="prediction")
+    explanation = explainer.explain(pd.Series({"a": 1.0, "b": 2.0}))
+    assert explanation.diagnostics()["cost"]["n_background"] == 3
+
+
+def test_cost_mode_fast_screens_auto_interaction_pairs():
+    feature_count = 30
+    background = pd.DataFrame({f"f{i}": [0.0] * 5 for i in range(feature_count)})
+    x = pd.Series({f"f{i}": 1.0 for i in range(feature_count)})
+    explainer = DhondtXAI(AddModel(), background_data=background, output_type="prediction")
+    explanation = explainer.explain(
+        x,
+        alliance_mode="auto",
+        affinity_mode="absolute_interaction",
+        cost_mode="fast",
+    )
+    cost = explanation.diagnostics()["cost"]
+    assert cost["resolved_cost_mode"] == "fast"
+    assert cost["interaction_pairs_used"] <= 200
+    assert cost["interaction_pairs_used"] < cost["interaction_pairs_total"]
+
+
+def test_user_alliance_interactions_only_evaluate_required_pairs():
+    background = pd.DataFrame({name: [0.0] * 5 for name in ["a", "b", "c", "d", "e"]})
+    explainer = DhondtXAI(AddModel(), background_data=background, output_type="prediction")
+    explanation = explainer.explain(
+        pd.Series({"a": 1.0, "b": 2.0, "c": 3.0, "d": 4.0, "e": 5.0}),
+        alliance_mode="user",
+        user_alliances=[["a", "b"]],
+        lambda_interaction=0.2,
+    )
+    cost = explanation.diagnostics()["cost"]
+    assert cost["interaction_pairs_used"] == 1
+    assert set(explanation.interactions.keys()) == {("a", "b")}
 
 
 def test_shap_like_single_row_values_are_1d():
@@ -541,7 +816,7 @@ def test_score_fn_alias_for_custom_models():
     def score_fn(X):
         return np.asarray(X).sum(axis=1)
 
-    explainer = Explainer(score_fn=score_fn, background_data=background)
+    explainer = Explainer.from_score_function(score_fn=score_fn, background_data=background)
     dhondtxai_values = explainer(pd.Series({"a": 1.0, "b": 2.0}), n_background=5)
     assert dhondtxai_values.values.shape == (2,)
     assert dhondtxai_values.deltas == pytest.approx(3.0)
@@ -590,6 +865,155 @@ def test_single_column_probability_class_zero_is_complement():
     assert explanation_zero.delta == pytest.approx(-explanation_one.delta)
 
 
+def test_keras_like_classification_auto_resolves_probability():
+    background = pd.DataFrame({"a": [0.0] * 5, "b": [0.0] * 5})
+    explainer = DhondtXAI(
+        SingleColumnProbabilityModel(),
+        background_data=background,
+        task="classification",
+        output_type="auto",
+        model_adapter="keras",
+    )
+    explanation = explainer.explain(pd.Series({"a": 2.0, "b": 1.0}), n_background=5)
+    assert explanation.resolved_output_type == "probability"
+    assert explanation.score == pytest.approx(0.3)
+
+
+def test_baseline_mode_sample_removes_sampling_projection_noise_for_additive_model():
+    class WeightedAdd:
+        def predict(self, X):
+            arr = np.asarray(X, dtype=float)
+            return 2 * arr[:, 0] + 3 * arr[:, 1]
+
+    background = pd.DataFrame({"a": np.arange(100, dtype=float), "b": np.arange(100, dtype=float) * 2})
+    row = pd.Series({"a": 100.0, "b": 200.0})
+    explainer = DhondtXAI(WeightedAdd(), background_data=background, output_type="prediction", random_state=0)
+    full = explainer.explain(row, n_background=1, allocation_seats=10000, baseline_mode="full")
+    sample = explainer.explain(row, n_background=1, allocation_seats=10000, baseline_mode="sample")
+    assert full.projection_residual_ratio > 0.1
+    assert sample.projection_residual_ratio < 1e-8
+    assert sample.diagnostics()["baseline_mode"] == "sample"
+    assert sample.full_baseline != pytest.approx(sample.sample_baseline)
+
+
+def test_lambda_alliance_vote_does_not_inflate_value_mass():
+    background = pd.DataFrame({"a": [0.0] * 10, "b": [0.0] * 10})
+    explainer = DhondtXAI(ProductModel(), background_data=background, output_type="prediction")
+    row = pd.Series({"a": 2.0, "b": 3.0})
+    no_bonus = explainer.explain(
+        row,
+        alliance_mode="user",
+        user_alliances=[["a", "b"]],
+        lambda_alliance_vote=0.0,
+        lambda_member_split=0.0,
+        n_background=5,
+        allocation_seats=1000,
+    )
+    bonus = explainer.explain(
+        row,
+        alliance_mode="user",
+        user_alliances=[["a", "b"]],
+        lambda_alliance_vote=10.0,
+        lambda_member_split=0.0,
+        n_background=5,
+        allocation_seats=1000,
+    )
+    assert sum(no_bonus.value_masses.values()) == pytest.approx(sum(bonus.value_masses.values()))
+    assert sum(no_bonus.positive_value_masses.values()) == pytest.approx(sum(bonus.positive_value_masses.values()))
+
+
+def test_top_level_explain_api_returns_local_explanation():
+    background = pd.DataFrame({"a": [0.0] * 5, "b": [0.0] * 5})
+    explanation = dxai.explain(
+        AddModel(),
+        X_background=background,
+        X=pd.Series({"a": 1.0, "b": 2.0}),
+        output_type="prediction",
+        n_background=5,
+    )
+    assert explanation.values.tolist() == pytest.approx([1.0, 2.0], abs=1e-3)
+    assert explanation.plot(kind="bar", show=False)[0] is not None
+
+
+def test_class_label_target_maps_to_class_index():
+    background = pd.DataFrame({"a": [0.0, 1.0], "b": [0.0, 1.0]})
+    explainer = DhondtXAI(ThreeClassProbaModel(), background_data=background, target="high")
+    explanation = explainer.explain(pd.Series({"a": 1.0, "b": 1.0}), n_background=2)
+    assert explanation.class_index == 2
+    assert explanation.class_label == "high"
+
+
+def test_multiclass_default_target_warns():
+    background = pd.DataFrame({"a": [0.0, 1.0], "b": [0.0, 1.0]})
+    explainer = DhondtXAI(ThreeClassProbaModel(), background_data=background)
+    with pytest.warns(UserWarning, match="Multiclass output detected"):
+        explainer.explain(pd.Series({"a": 1.0, "b": 1.0}), n_background=2)
+
+
+def test_output_adapter_and_predict_kwargs_are_applied():
+    class KwargModel:
+        def predict(self, X, scale=1.0):
+            return np.asarray(X).sum(axis=1) * scale
+
+    background = pd.DataFrame({"a": [0.0, 0.0], "b": [0.0, 0.0]})
+    explainer = DhondtXAI(
+        KwargModel(),
+        background_data=background,
+        output_type="prediction",
+        predict_kwargs={"scale": 2.0},
+        output_adapter=lambda values: np.asarray(values) + 1.0,
+    )
+    explanation = explainer.explain(pd.Series({"a": 1.0, "b": 2.0}), n_background=2)
+    assert explanation.score == pytest.approx(7.0)
+
+
+def test_invalid_output_type_raises_at_init():
+    with pytest.raises(ValueError, match="output_type"):
+        DhondtXAI(AddModel(), background_data=pd.DataFrame({"a": [0.0]}), output_type="labels")
+
+
+def test_empty_global_input_raises_clear_error():
+    explainer = make_add_explainer()
+    with pytest.raises(ValueError, match="at least one row"):
+        explainer.explain_global(pd.DataFrame(columns=["a", "b", "c"]))
+
+
+def test_max_model_rows_caps_screened_interactions():
+    columns = [f"f{i}" for i in range(20)]
+    background = pd.DataFrame(np.zeros((30, len(columns))), columns=columns)
+    row = pd.Series(np.ones(len(columns)), index=columns)
+    explainer = DhondtXAI(AddModel(), background_data=background, output_type="prediction")
+    explanation = explainer.explain(
+        row,
+        alliance_mode="auto",
+        affinity_mode="absolute_interaction",
+        lambda_interaction=0.1,
+        cost_mode="research",
+        n_background=2,
+        max_model_rows=100,
+    )
+    assert explanation.diagnostics()["cost"]["estimated_model_rows"] <= 100
+
+
+def test_friendly_residual_labels_appear_on_bar_plot():
+    explainer = make_add_explainer()
+    explanation = explainer.explain(
+        pd.Series({"a": 10.0, "b": 0.0, "c": 0.0}),
+        exclude_features=["a"],
+        n_background=5,
+    )
+    _, ax = explainer.plot_local_bar(explanation, show=False)
+    labels = [tick.get_text() for tick in ax.get_yticklabels()]
+    assert "excluded-feature effect" in labels
+
+
+def test_negative_plot_parliament_seats_raise():
+    from dhondtxai import plot_parliament
+
+    with pytest.raises(ValueError, match="non-negative"):
+        plot_parliament(10, ["a"], [-1], show=False)
+
+
 def test_one_dimensional_probability_class_zero_is_complement():
     background = pd.DataFrame({"a": [0.0] * 5, "b": [0.0] * 5})
 
@@ -602,6 +1026,25 @@ def test_one_dimensional_probability_class_zero_is_complement():
     explanation_zero = explainer.explain(x, class_index=0, n_background=5)
     assert explanation_one.score == pytest.approx(0.3)
     assert explanation_zero.score == pytest.approx(0.7)
+
+
+def test_probability_output_outside_unit_interval_raises():
+    background = pd.DataFrame({"a": [0.0, 0.0], "b": [0.0, 0.0]})
+    explainer = DhondtXAI(InvalidProbabilityModel(), background_data=background, output_type="probability")
+    with pytest.raises(ValueError, match="outside \\[0, 1\\]"):
+        explainer.explain(pd.Series({"a": 1.0, "b": 1.0}), n_background=2)
+
+
+def test_probability_validation_can_be_disabled_for_custom_advanced_use():
+    background = pd.DataFrame({"a": [0.0, 0.0], "b": [0.0, 0.0]})
+    explainer = DhondtXAI(
+        InvalidProbabilityModel(),
+        background_data=background,
+        output_type="probability",
+        validate_probability=False,
+    )
+    explanation = explainer.explain(pd.Series({"a": 1.0, "b": 1.0}), n_background=2)
+    assert explanation.score == pytest.approx(4.0)
 
 
 def test_xgboost_sklearn_classifier_auto_adapter_if_installed():
@@ -727,13 +1170,29 @@ def test_waterfall_warns_when_residuals_are_hidden():
     assert any("residuals hidden" in text.get_text() for text in ax.texts)
 
 
+def test_waterfall_other_features_is_not_labeled_as_residual():
+    explainer = make_add_explainer()
+    explanation = explainer.explain(pd.Series({"a": 1.0, "b": 2.0, "c": 3.0}), n_background=5)
+    _, ax = explainer.plot_waterfall(explanation, top_k=1, show=False)
+    tick_labels = "\n".join(label.get_text() for label in ax.get_xticklabels())
+    assert "other\nfeatures" in tick_labels or "other features" in tick_labels
+    assert "Other features" in " ".join(text.get_text() for text in ax.texts)
+
+
 def test_signed_parliament_smoke():
     from dhondtxai import plot_signed_parliament
 
     explainer = make_add_explainer()
     explanation = explainer.explain(pd.Series({"a": 1.0, "b": -2.0, "c": 0.0}), n_background=5)
-    fig, ax = plot_signed_parliament(explanation, mode="signed", show=False)
+    fig, ax = plot_signed_parliament(explanation, mode="signed", palette="signed", show=False)
     assert fig is not None and ax is not None
+
+
+def test_non_english_language_is_not_supported():
+    explainer = make_add_explainer()
+    explanation = explainer.explain(pd.Series({"a": 1.0, "b": -2.0, "c": 0.0}), n_background=5)
+    with pytest.raises(ValueError, match="Only English"):
+        explanation.summary(language="xx")
 
 
 def test_signed_parliament_snaps_awkward_seat_count():
