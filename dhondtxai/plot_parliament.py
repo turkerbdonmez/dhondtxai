@@ -14,6 +14,10 @@ def plot_parliament(
     additional_rows=5,
     colors=None,
     title=None,
+    snap_seats=True,
+    seat_step="auto",
+    max_legend_items=12,
+    empty_message="No eligible D'Hondt seats",
     show=True,
 ):
     """Plot a semicircular parliament view.
@@ -26,10 +30,23 @@ def plot_parliament(
 
     if len(features) != len(seats):
         raise ValueError("Number of features and seats must match.")
+    requested_total_seats = int(total_seats)
     if total_seats < int(seats.sum()):
         total_seats = int(seats.sum())
     if total_seats <= 0:
         raise ValueError("total_seats must be positive.")
+    display_total_seats = (
+        _recommended_seat_count(int(total_seats), seat_step)
+        if snap_seats
+        else int(total_seats)
+    )
+    positive_groups = int(np.count_nonzero(seats))
+    display_total_seats = max(display_total_seats, positive_groups)
+    display_seats = (
+        _rescale_seats(seats, display_total_seats)
+        if int(seats.sum()) > 0 and display_total_seats != int(seats.sum())
+        else seats.copy()
+    )
 
     if colors is None:
         colors = _default_colors(len(features))
@@ -39,9 +56,10 @@ def plot_parliament(
             raise ValueError("Number of colors must match number of features.")
 
     feature_colors = {feature: colors[i % len(colors)] for i, feature in enumerate(features)}
-    sorted_features = sorted(features, key=lambda feature: seats[features.index(feature)], reverse=True)
+    order = np.argsort(-display_seats)
+    sorted_features = [features[index] for index in order if int(display_seats[index]) > 0]
 
-    pieces_per_slice_without_additional = max(1, math.ceil(total_seats / slices))
+    pieces_per_slice_without_additional = max(1, math.ceil(display_total_seats / slices))
     pieces_per_slice = pieces_per_slice_without_additional + additional_rows
     angle_gap = 0.2
     radial_angles = np.linspace(180, 0, slices + 1)
@@ -52,21 +70,31 @@ def plot_parliament(
     start_radius = piece_depth * additional_rows
 
     current_feature = 0
-    remaining_seats = seats[features.index(sorted_features[current_feature])] if sorted_features else 0
+    remaining_seats = int(display_seats[features.index(sorted_features[current_feature])]) if sorted_features else 0
     current_color = feature_colors[sorted_features[current_feature]] if sorted_features else "tab:gray"
     total_assigned_seats = 0
+
+    if not sorted_features or int(display_seats.sum()) <= 0:
+        fig, ax = plt.subplots(figsize=(10, 5))
+        ax.axis("off")
+        ax.text(0.5, 0.5, empty_message, transform=ax.transAxes, ha="center", va="center", fontsize=13)
+        ax.set_title(title or f"{requested_total_seats}-Seat Parliamentary Representation", fontsize=14)
+        fig.tight_layout()
+        if show:
+            plt.show()
+        return fig, ax
 
     for slice_index in range(slices):
         start_angle = radial_angles[slice_index] - angle_gap / 2
         end_angle = radial_angles[slice_index + 1] + angle_gap / 2
 
         for piece in range(additional_rows, pieces_per_slice):
-            if total_assigned_seats >= int(seats.sum()):
+            if total_assigned_seats >= int(display_seats.sum()):
                 break
 
             while remaining_seats == 0 and current_feature < len(sorted_features) - 1:
                 current_feature += 1
-                remaining_seats = seats[features.index(sorted_features[current_feature])]
+                remaining_seats = int(display_seats[features.index(sorted_features[current_feature])])
                 current_color = feature_colors[sorted_features[current_feature]]
 
             if remaining_seats == 0:
@@ -109,17 +137,25 @@ def plot_parliament(
     ax.axis("off")
 
     legend_patches = []
-    for feature in sorted_features:
-        seat_count = int(seats[features.index(feature)])
+    for feature in sorted_features[:max_legend_items]:
+        seat_count = int(display_seats[features.index(feature)])
         if seat_count <= 0:
             continue
         legend_patches.append(
             plt.Rectangle((0, 0), 1, 1, color=feature_colors[feature], label=f"{feature} ({seat_count} seats)")
         )
+    if len(sorted_features) > max_legend_items:
+        hidden_count = len(sorted_features) - max_legend_items
+        legend_patches.append(
+            plt.Rectangle((0, 0), 1, 1, color="lightgray", label=f"+ {hidden_count} smaller groups")
+        )
     if legend_patches:
         ax.legend(handles=legend_patches, bbox_to_anchor=(1.05, 1), loc="upper left")
 
-    ax.set_title(title or f"{total_seats}-Seat Parliamentary Representation", fontsize=14)
+    title_text = title or f"{requested_total_seats}-Seat Parliamentary Representation"
+    if display_total_seats != requested_total_seats:
+        title_text = f"{title_text}\nvisualized as {display_total_seats} seats for readability"
+    ax.set_title(title_text, fontsize=14)
     fig.tight_layout()
     if show:
         plt.show()
@@ -131,6 +167,10 @@ def plot_signed_parliament(
     mode="signed",
     slices=50,
     additional_rows=5,
+    seat_count=None,
+    snap_seats=True,
+    seat_step="auto",
+    max_legend_items=12,
     show=True,
 ):
     """Plot positive, negative, or combined DhondtXAI seats."""
@@ -170,6 +210,8 @@ def plot_signed_parliament(
     total = int(sum(seats))
     if total <= 0:
         total = explanation.seat_count
+    if seat_count is not None:
+        total = int(seat_count)
     return plot_parliament(
         total_seats=total,
         features=labels,
@@ -178,6 +220,9 @@ def plot_signed_parliament(
         additional_rows=additional_rows,
         colors=colors,
         title=title,
+        snap_seats=snap_seats,
+        seat_step=seat_step,
+        max_legend_items=max_legend_items,
         show=show,
     )
 
@@ -216,3 +261,51 @@ def _red_scale(count):
         return []
     cmap = plt.get_cmap("Reds")
     return [cmap(0.45 + 0.45 * (index / max(count - 1, 1))) for index in range(count)]
+
+
+def _recommended_seat_count(total_seats, seat_step="auto"):
+    total_seats = int(total_seats)
+    if total_seats <= 0:
+        return total_seats
+    if seat_step == "auto":
+        if total_seats <= 150:
+            step = 10
+        elif total_seats <= 400:
+            step = 50
+        else:
+            step = 100
+    else:
+        step = int(seat_step)
+        if step <= 0:
+            raise ValueError("seat_step must be positive or 'auto'.")
+    return max(step, int(round(total_seats / step) * step))
+
+
+def _rescale_seats(seats, target_total):
+    seats = np.asarray(seats, dtype=int)
+    target_total = int(target_total)
+    if target_total <= 0 or int(seats.sum()) <= 0:
+        return np.zeros_like(seats)
+
+    raw = seats.astype(float) / float(seats.sum()) * target_total
+    scaled = np.floor(raw).astype(int)
+    positive = seats > 0
+    scaled[(scaled == 0) & positive] = 1
+
+    while int(scaled.sum()) > target_total:
+        candidates = np.where(scaled > 1)[0]
+        if len(candidates) == 0:
+            break
+        index = candidates[np.argmin(raw[candidates] - np.floor(raw[candidates]))]
+        scaled[index] -= 1
+
+    remainder = target_total - int(scaled.sum())
+    if remainder > 0:
+        fractional = raw - np.floor(raw)
+        order = np.argsort(-fractional)
+        cursor = 0
+        while remainder > 0:
+            scaled[order[cursor % len(order)]] += 1
+            remainder -= 1
+            cursor += 1
+    return scaled

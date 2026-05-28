@@ -5,7 +5,7 @@ from setuptools import setup, find_packages
 
 
 ROOT = Path(__file__).resolve().parent
-VERSION = "0.9.2"
+VERSION = "0.9.3"
 README = (ROOT / "README.md").read_text(encoding="utf-8")
 
 setup(
@@ -49,6 +49,7 @@ setup(
         'Programming Language :: Python :: 3.10',
         'Programming Language :: Python :: 3.11',
         'Programming Language :: Python :: 3.12',
+        'Programming Language :: Python :: 3.13',
         'Intended Audience :: Science/Research',
         'Topic :: Scientific/Engineering :: Artificial Intelligence',
         'Operating System :: OS Independent',

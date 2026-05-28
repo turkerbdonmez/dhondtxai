@@ -78,6 +78,12 @@ class KerasLikeModel:
         return np.asarray(X).sum(axis=1)
 
 
+class SingleColumnProbabilityModel:
+    def predict(self, X, verbose=0):
+        probabilities = np.clip(np.asarray(X).sum(axis=1) / 10.0, 0.0, 1.0)
+        return probabilities.reshape(-1, 1)
+
+
 def make_add_explainer():
     background = pd.DataFrame({"a": [0.0] * 20, "b": [0.0] * 20, "c": [0.0] * 20})
     return DhondtXAI(AddModel(), background_data=background, output_type="prediction")
@@ -497,7 +503,7 @@ def test_compatibility_checker_works_with_x_sample_without_background():
 
 
 def test_package_version_exposed():
-    assert __version__ == "0.9.2"
+    assert __version__ == "0.9.3"
 
 
 def test_shap_like_explainer_values_api():
@@ -541,6 +547,63 @@ def test_score_fn_alias_for_custom_models():
     assert dhondtxai_values.deltas == pytest.approx(3.0)
 
 
+def test_custom_2d_score_respects_class_index():
+    background = pd.DataFrame({"a": [0.0] * 5, "b": [0.0] * 5})
+
+    def score_fn(X):
+        arr = np.asarray(X)
+        return np.column_stack([arr[:, 0], arr[:, 0] + 10.0 * arr[:, 1]])
+
+    x = pd.Series({"a": 0.1, "b": 1.0})
+    explainer = Explainer(score_fn=score_fn, background_data=background, class_index=1)
+    explanation = explainer.explain(x, n_background=5)
+    assert explanation.score == pytest.approx(10.1)
+
+
+def test_custom_2d_score_respects_predicted_class_index():
+    background = pd.DataFrame({"a": [0.0] * 5, "b": [0.0] * 5})
+
+    def score_fn(X):
+        arr = np.asarray(X)
+        return np.column_stack([arr[:, 0], arr[:, 0] + 10.0 * arr[:, 1]])
+
+    x = pd.Series({"a": 0.1, "b": 1.0})
+    explainer = Explainer(score_fn=score_fn, background_data=background, class_index="predicted")
+    explanation = explainer.explain(x, n_background=5)
+    assert explanation.class_index == 1
+    assert explanation.score == pytest.approx(10.1)
+
+
+def test_single_column_probability_class_zero_is_complement():
+    background = pd.DataFrame({"a": [0.0] * 5, "b": [0.0] * 5})
+    explainer = DhondtXAI(
+        SingleColumnProbabilityModel(),
+        background_data=background,
+        output_type="probability",
+        model_adapter="keras",
+    )
+    x = pd.Series({"a": 3.0, "b": 2.0})
+    explanation_one = explainer.explain(x, class_index=1, n_background=5)
+    explanation_zero = explainer.explain(x, class_index=0, n_background=5)
+    assert explanation_one.score == pytest.approx(0.5)
+    assert explanation_zero.score == pytest.approx(0.5)
+    assert explanation_zero.delta == pytest.approx(-explanation_one.delta)
+
+
+def test_one_dimensional_probability_class_zero_is_complement():
+    background = pd.DataFrame({"a": [0.0] * 5, "b": [0.0] * 5})
+
+    def score_fn(X):
+        return np.clip(np.asarray(X).sum(axis=1) / 10.0, 0.0, 1.0)
+
+    explainer = Explainer(score_fn=score_fn, background_data=background, output_type="probability")
+    x = pd.Series({"a": 2.0, "b": 1.0})
+    explanation_one = explainer.explain(x, class_index=1, n_background=5)
+    explanation_zero = explainer.explain(x, class_index=0, n_background=5)
+    assert explanation_one.score == pytest.approx(0.3)
+    assert explanation_zero.score == pytest.approx(0.7)
+
+
 def test_xgboost_sklearn_classifier_auto_adapter_if_installed():
     xgb = pytest.importorskip("xgboost")
     X, y = make_adapter_data()
@@ -550,6 +613,7 @@ def test_xgboost_sklearn_classifier_auto_adapter_if_installed():
         learning_rate=0.5,
         eval_metric="logloss",
         random_state=0,
+        n_jobs=1,
     )
     model.fit(X, y)
     explainer = DhondtXAI(model, background_data=X, output_type="auto")
@@ -563,7 +627,7 @@ def test_xgboost_native_booster_auto_adapter_if_installed():
     X, y = make_adapter_data()
     dtrain = xgb.DMatrix(X.to_numpy(), label=y.to_numpy(), feature_names=list(X.columns))
     booster = xgb.train(
-        {"objective": "binary:logistic", "eval_metric": "logloss", "verbosity": 0},
+        {"objective": "binary:logistic", "eval_metric": "logloss", "verbosity": 0, "nthread": 1},
         dtrain,
         num_boost_round=5,
     )
@@ -641,3 +705,46 @@ def test_plot_functions_smoke():
     assert fig1 is not None and ax1 is not None
     assert fig2 is not None and ax2 is not None
     assert fig3 is not None and ax3 is not None
+
+
+def test_alliance_plot_top_k_is_applied():
+    explainer = make_add_explainer()
+    explanation = explainer.explain(pd.Series({"a": 1.0, "b": 2.0, "c": 3.0}), n_background=5)
+    fig, ax = explainer.plot_explanation(explanation, level="alliance", top_k=2, show=False)
+    assert fig is not None
+    assert len(ax.patches) == 2
+
+
+def test_waterfall_warns_when_residuals_are_hidden():
+    explainer = make_add_explainer()
+    explanation = explainer.explain(
+        pd.Series({"a": 10.0, "b": 0.0, "c": 0.0}),
+        exclude_features=["a"],
+        n_background=5,
+    )
+    fig, ax = explainer.plot_waterfall(explanation, include_residuals=False, show=False)
+    assert fig is not None
+    assert any("residuals hidden" in text.get_text() for text in ax.texts)
+
+
+def test_signed_parliament_smoke():
+    from dhondtxai import plot_signed_parliament
+
+    explainer = make_add_explainer()
+    explanation = explainer.explain(pd.Series({"a": 1.0, "b": -2.0, "c": 0.0}), n_background=5)
+    fig, ax = plot_signed_parliament(explanation, mode="signed", show=False)
+    assert fig is not None and ax is not None
+
+
+def test_signed_parliament_snaps_awkward_seat_count():
+    from dhondtxai import plot_signed_parliament
+
+    explainer = make_add_explainer()
+    explanation = explainer.explain(
+        pd.Series({"a": 10.0, "b": 3.0, "c": 1.0}),
+        seats=257,
+        n_background=5,
+    )
+    fig, ax = plot_signed_parliament(explanation, mode="signed", show=False)
+    assert fig is not None
+    assert "visualized as 250 seats" in ax.get_title()

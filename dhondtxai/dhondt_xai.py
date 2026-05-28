@@ -196,15 +196,31 @@ class DhondtExplanation:
         if self.projection_residual_ratio < 0.10:
             return None
         if language == "tr":
-            level = "orta" if self.projection_residual_ratio < 0.50 else "yüksek"
+            if self.projection_residual_ratio < 0.50:
+                level = "orta"
+                detail = "Atıfları temkinli yorumlayın."
+            else:
+                level = "yüksek"
+                detail = (
+                    "Ham D'Hondt temsili model farkını zayıf yakalamış olabilir; "
+                    "atıflar büyük ölçüde projection düzeltmesine dayanabilir."
+                )
             return (
                 f"Uyarı: Projeksiyon düzeltmesi {level} düzeyde. "
-                "Atıfları temkinli yorumlayın."
+                f"{detail}"
             )
-        level = "medium" if self.projection_residual_ratio < 0.50 else "high"
+        if self.projection_residual_ratio < 0.50:
+            level = "medium"
+            detail = "Interpret attributions cautiously."
+        else:
+            level = "high"
+            detail = (
+                "Raw D'Hondt representation may weakly match the model difference; "
+                "attributions may be driven substantially by projection correction."
+            )
         return (
             f"Warning: Projection correction is {level}. "
-            "Interpret attributions cautiously."
+            f"{detail}"
         )
 
     def summary(self, top_k=5, language="en"):
@@ -1156,6 +1172,8 @@ class DhondtXAI:
             ylabel = "Local attribution"
         elif level == "alliance":
             frame = explanation.to_alliance_frame()
+            if top_k is not None:
+                frame = frame.head(top_k).reset_index(drop=True)
             names = frame["alliance"].tolist()
             values = frame["source_attribution"].tolist()
             ylabel = "Alliance attribution"
@@ -1168,6 +1186,19 @@ class DhondtXAI:
         ax.axhline(0, color="black", linewidth=0.8)
         ax.set_ylabel(ylabel)
         ax.set_title("DhondtXAI Local Explanation")
+        warning = explanation._projection_warning("en")
+        if warning is not None and explanation.projection_residual_ratio >= 0.50:
+            ax.text(
+                0.01,
+                0.98,
+                "High projection correction",
+                transform=ax.transAxes,
+                va="top",
+                ha="left",
+                fontsize=9,
+                color="darkred",
+                bbox={"boxstyle": "round,pad=0.25", "facecolor": "white", "edgecolor": "darkred"},
+            )
         ax.tick_params(axis="x", rotation=90)
         fig.tight_layout()
         if show:
@@ -1188,6 +1219,7 @@ class DhondtXAI:
         if explanation is None:
             raise ValueError("No explanation is available. Call explain(...) first.")
 
+        hidden_residual = 0.0 if include_residuals else sum(explanation.residual_values.values())
         frame = explanation.to_feature_frame(include_residuals=include_residuals)
         if top_k is not None and len(frame) > top_k:
             selected = frame.head(top_k).copy()
@@ -1235,6 +1267,23 @@ class DhondtXAI:
         ax.set_xticklabels(labels, rotation=75, ha="right")
         ax.set_ylabel("Model score")
         ax.set_title("DhondtXAI Waterfall Explanation")
+        notes = []
+        if abs(hidden_residual) > self.eps:
+            notes.append("residuals hidden; bars may not sum to score")
+        if explanation.projection_residual_ratio >= 0.50:
+            notes.append("high projection correction")
+        if notes:
+            ax.text(
+                0.01,
+                0.98,
+                "\n".join(notes),
+                transform=ax.transAxes,
+                va="top",
+                ha="left",
+                fontsize=9,
+                color="darkred",
+                bbox={"boxstyle": "round,pad=0.25", "facecolor": "white", "edgecolor": "darkred"},
+            )
         fig.tight_layout()
         if show:
             plt.show()
@@ -1346,7 +1395,7 @@ class DhondtXAI:
         scores = np.asarray(self._predict_raw_scores(X, output_type))
 
         if output_type == "logit":
-            values = self._select_output(scores, class_index)
+            values = self._select_probability_output(scores, class_index)
             values = np.clip(values, self.eps, 1.0 - self.eps)
             return np.log(values / (1.0 - values))
 
@@ -1360,11 +1409,18 @@ class DhondtXAI:
                 return self._ensure_numeric_output(scores, "decision_function")
             return self._select_output(scores, class_index)
 
-        if output_type in {"probability", "decision"}:
+        if output_type == "probability":
+            return self._select_probability_output(scores, class_index)
+
+        if output_type == "decision":
             return self._select_output(scores, class_index)
 
-        if output_type in {"prediction", "custom"}:
+        if output_type == "prediction":
             return self._select_output(scores, target_index)
+
+        if output_type == "custom":
+            index = target_index if target_index is not None else class_index
+            return self._select_output(scores, index)
 
         raise ValueError("output_type must be auto, probability, logit, decision, prediction, custom.")
 
@@ -1520,6 +1576,38 @@ class DhondtXAI:
             return self._ensure_numeric_output(scores[:, selected_index], "model output")
         raise ValueError("Model output must be 1D or 2D numeric scores.")
 
+    def _select_probability_output(self, scores, class_index=None):
+        scores = np.asarray(scores)
+        if scores.ndim == 0:
+            scores = scores.reshape(1)
+
+        selected_index = self.class_index if class_index is None else class_index
+        if selected_index == "predicted":
+            raise ValueError("class_index='predicted' must be resolved before probability output selection.")
+
+        if scores.ndim == 1:
+            probabilities = self._ensure_numeric_output(scores, "probability output")
+            if selected_index in (None, 1):
+                return probabilities
+            if selected_index == 0:
+                return 1.0 - probabilities
+            raise ValueError("1D binary probability output supports class_index 0 or 1.")
+
+        if scores.ndim == 2 and scores.shape[1] == 1:
+            probabilities = self._ensure_numeric_output(scores[:, 0], "probability output")
+            if selected_index in (None, 1):
+                return probabilities
+            if selected_index == 0:
+                return 1.0 - probabilities
+            raise ValueError("Single-column binary probability output supports class_index 0 or 1.")
+
+        if scores.ndim == 2:
+            if selected_index is None and scores.shape[1] == 2:
+                selected_index = 1
+            return self._select_output(scores, selected_index)
+
+        raise ValueError("Probability output must be 1D or 2D numeric scores.")
+
     def _ensure_numeric_output(self, values, source):
         try:
             return np.asarray(values, dtype=float)
@@ -1571,8 +1659,12 @@ class DhondtXAI:
                 "class_index='predicted' requires probability, logit, decision, or a 2D custom score_fn output."
             )
 
+        if output_type in {"probability", "logit"} and scores.ndim == 2 and scores.shape[1] == 1:
+            return 1 if float(scores[0, 0]) >= 0.5 else 0
         if scores.ndim == 2:
             return int(np.argmax(scores[0]))
+        if output_type in {"probability", "logit"} and scores.ndim == 1:
+            return 1 if float(scores[0]) >= 0.5 else 0
         if scores.ndim == 1:
             classes = self._get_classes()
             if classes is not None and len(classes) == 2:

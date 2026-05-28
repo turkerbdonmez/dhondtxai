@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.9.3
+
+- Fixed custom two-dimensional score output selection so `class_index` and
+  `class_index="predicted"` are respected when `target_index` is not provided.
+- Fixed one-dimensional and single-column binary probability outputs so class 0
+  explains `1 - p` and class 1 explains `p`.
+- Strengthened high projection-residual warnings in summaries and plots.
+- Applied alliance-level `top_k` in local explanation plots.
+- Added residual-hidden warnings to waterfall plots.
+- Optimized signed parliament visualization with readable seat snapping,
+  configurable display seat counts, zero-seat messages, and capped legends.
+- Added current visual example generation and refreshed `exampleimages/`.
+- Stabilized XGBoost tests and CI by limiting native thread pools.
+
 ## 0.9.2
 
 - Added SHAP-like `Explainer(model, background)` and callable values API:

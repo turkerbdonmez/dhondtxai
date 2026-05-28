@@ -10,7 +10,7 @@ numeric scoring function. It includes automatic adapters for common model
 families such as sklearn-style estimators, XGBoost, LightGBM, CatBoost, PyTorch
 modules, and Keras-like models.
 
-> **Status:** DhondtXAI 0.9.2 is an experimental/beta tabular XAI library. It is
+> **Status:** DhondtXAI 0.9.3 is an experimental/beta tabular XAI library. It is
 > suitable for research, model inspection, and controlled pilot use. For
 > high-stakes deployment, validate explanations against task-specific benchmarks
 > and compare them with established methods such as SHAP and LIME.
@@ -18,7 +18,7 @@ modules, and Keras-like models.
 ## Install
 
 ```bash
-pip install dhondtxai==0.9.2
+pip install dhondtxai==0.9.3
 ```
 
 For local development from this repository:
@@ -358,6 +358,10 @@ dhondtxai_values = explainer(X_test)
 
 Keras-like models receive NumPy arrays by default.
 
+Binary neural models that return a one-dimensional sigmoid probability or a
+single-column `(n, 1)` probability matrix are handled as binary probabilities:
+class 1 uses `p`, class 0 uses `1 - p`.
+
 For custom, Keras, PyTorch, ONNX, or remote models, pass a callable:
 
 ```python
@@ -410,6 +414,10 @@ explainer = Explainer(
     target_index=1,
 )
 ```
+
+For custom two-dimensional score matrices, `target_index` has priority. If it
+is not provided, `class_index` is used, including `class_index="predicted"` for
+argmax-based local class selection.
 
 For multiclass classification, you may explain the predicted class directly:
 
@@ -639,6 +647,44 @@ high.
 - `plot_global_importance(...)`: residual-aware global importance.
 - `plot_global_alliance_heatmap(...)`: global alliance co-occurrence matrix.
 
+Parliament plots are a core DhondtXAI output. The user controls the requested
+seat count through `seats` in `explain(...)` or `seat_count` in
+`plot_signed_parliament(...)`. For readability, the visual layer snaps awkward
+display totals to clean counts by default: multiples of 10 for small
+parliaments, 50 for medium parliaments, and 100 for larger parliaments. For
+example, a 257-seat request is visualized as 250 seats unless
+`snap_seats=False` is passed. This affects only the display; numerical
+attributions use `allocation_seats`.
+
+```python
+explanation = explainer.explain(X_test.iloc[0], seats=257)
+
+plot_signed_parliament(
+    explanation,
+    mode="signed",
+    seat_count=257,
+    snap_seats=True,
+)
+```
+
+Example visual outputs are included in `exampleimages/`:
+
+![Local bar plot](https://raw.githubusercontent.com/turkerbdonmez/dhondtxai/main/exampleimages/local_bar.png)
+
+![Waterfall plot](https://raw.githubusercontent.com/turkerbdonmez/dhondtxai/main/exampleimages/waterfall.png)
+
+![Signed parliament](https://raw.githubusercontent.com/turkerbdonmez/dhondtxai/main/exampleimages/signed_parliament.png)
+
+![Global importance](https://raw.githubusercontent.com/turkerbdonmez/dhondtxai/main/exampleimages/global_importance.png)
+
+![Global alliance heatmap](https://raw.githubusercontent.com/turkerbdonmez/dhondtxai/main/exampleimages/global_alliance_heatmap.png)
+
+Regenerate them with:
+
+```bash
+MPLBACKEND=Agg python examples/generate_visual_examples.py
+```
+
 ## Limitations
 
 - DhondtXAI is a beta tabular XAI library, not a mature SHAP/LIME replacement.
@@ -672,7 +718,7 @@ python -m twine check dist/*
 Then a built wheel can be installed locally with:
 
 ```bash
-pip install dist/dhondtxai-0.9.2-py3-none-any.whl
+pip install dist/dhondtxai-0.9.3-py3-none-any.whl
 ```
 
 Publishing to PyPI requires a PyPI API token:
