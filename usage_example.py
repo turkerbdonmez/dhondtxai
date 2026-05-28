@@ -1,68 +1,63 @@
-
-# Import necessary libraries
 import pandas as pd
-from catboost import CatBoostClassifier
+from sklearn.datasets import load_breast_cancer
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from dhondtxai import DhondtXAI, plot_parliament  # Import the DhondtXAI class and plot_parliament function
 
-# Load the dataset
-data = pd.read_csv('/path/to/data.csv')  # Adjust the path according to your setup
+from dhondtxai import DhondtXAI, plot_signed_parliament
 
-# Separate the features and the target variable
-X = data.drop(['Target'], axis=1)  # Assuming 'Target' is the target variable
-y = data['Target']
 
-# Split the dataset into training and testing sets
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+def main():
+    dataset = load_breast_cancer()
+    X = pd.DataFrame(dataset.data, columns=dataset.feature_names)
+    y = pd.Series(dataset.target)
 
-# Initialize a CatBoost classifier
-model = CatBoostClassifier(verbose=0, eval_metric='Accuracy')
+    X_train, X_test, y_train, y_test = train_test_split(
+        X,
+        y,
+        test_size=0.3,
+        random_state=42,
+        stratify=y,
+    )
 
-# Use DhondtXAI for model training and feature importance analysis
-dhondtxai = DhondtXAI(model)
+    model = RandomForestClassifier(n_estimators=200, random_state=42)
+    explainer = DhondtXAI(model, output_type="probability", class_index=1, random_state=42)
+    explainer.fit(X_train, y_train)
 
-# Train the model using the DhondtXAI class - pass both X_train and y_train
-dhondtxai.fit(X_train, y_train)
+    explanation = explainer.explain(
+        X_test.iloc[0],
+        seats=120,
+        allocation_seats=5000,
+        threshold=0.05,
+        redistribute=True,
+        alliance_mode="user",
+        user_alliances=[
+            ["mean concavity", "mean concave points"],
+            ["mean radius", "mean perimeter", "mean area"],
+        ],
+        n_background=50,
+        lambda_interaction=0.2,
+        beta=1.0,
+        perturbation="interventional",
+        tie_break="stable",
+    )
 
-# Kullanıcı dostu arayüz ile ittifakları ve dışlanacak değişkenleri seçin
-alliances, exclude_features = dhondtxai.select_features(X.columns)
+    print(f"Model score: {explanation.score:.4f}")
+    print(f"Baseline: {explanation.baseline:.4f}")
+    print(f"Delta: {explanation.delta:.4f}")
+    print(f"Projection residual ratio: {explanation.projection_residual_ratio:.4f}")
+    print(f"Excluded residual: {explanation.excluded_residual:.4f}")
+    print(f"Below-threshold residual: {explanation.below_threshold_residual:.4f}")
+    print("\nExplanation summary")
+    print(explanation.summary(top_k=5))
+    print("\nFeature attributions")
+    print(explanation.to_feature_frame())
+    print("\nAlliance seats")
+    print(explanation.to_alliance_frame())
 
-# Specify parameters for the D'Hondt method dynamically
-num_votes = int(input("Enter the total number of votes: "))
-num_mps = int(input("Enter the total number of MPs: "))
-threshold_input = input("Enter the threshold value (in percentage) or type 'none': ")
-threshold = None if threshold_input.lower() == 'none' else float(threshold_input)
+    explainer.plot_local_bar(explanation, top_k=10, show=False)
+    explainer.plot_waterfall(explanation, top_k=10, show=False)
+    plot_signed_parliament(explanation, mode="signed", show=False)
 
-# Apply the D'Hondt method
-features, votes = dhondtxai.apply_dhondt(
-    num_votes=num_votes,
-    num_mps=num_mps,
-    threshold=threshold,
-    alliances=alliances,
-    exclude_features=exclude_features
-)
 
-# Display the results
-print("Votes per Feature/Alliance:")
-for feature, vote in zip(features, votes):
-    print(f"{feature}: {int(vote)} votes")
-
-# Use the D'Hondt method to allocate seats
-seats = dhondtxai.dhondt_method(votes, num_mps)
-
-# Display D'Hondt results
-print("\nD'Hondt Method Results:")
-for feature, seat in zip(features, seats):
-    print(f"{feature}: {seat} MPs")
-
-# Plot the results using plot_parliament
-dhondtxai.plot_results(features, seats)
-
-# Additional: Create a visual representation of the parliament using plot_parliament
-plot_parliament(
-    total_seats=num_mps,
-    features=features,
-    seats=seats,
-    slices=30,  # Customize the number of slices for visualization
-    additional_rows=10  # Adjust inner space rows if needed
-)
+if __name__ == "__main__":
+    main()

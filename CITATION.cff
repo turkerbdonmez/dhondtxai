@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use DhondtXAI in academic work, please cite it."
+title: "DhondtXAI: D'Hondt-projected removal-effect attributions for explainable AI"
+authors:
+  - family-names: "Dönmez"
+    given-names: "Türker Berk"
+version: "0.9.1"
+date-released: "2026-05-28"
+repository-code: "https://github.com/turkerbdonmez/dhondtxai"
+preferred-citation:
+  type: article
+  title: "Explainable AI through a Democratic Lens: DhondtXAI for Proportional Feature Importance Using the D'Hondt Method"
+  authors:
+    - family-names: "Dönmez"
+      given-names: "Türker Berk"
+  year: 2024
+  doi: "10.48550/arXiv.2411.05196"

@@ -1,169 +1,556 @@
+# DhondtXAI
 
-# DhondtXAI: Democratizing Explainable AI Through Proportional Feature Allocation
+DhondtXAI is a SHAP-independent, D'Hondt-based post-hoc attribution library for
+tabular models. It does not compute SHAP values or approximate Shapley values.
+Instead, it defines a separate D'Hondt-projected removal-effect attribution
+operator. SHAP can still be used as an external benchmark.
 
-**DhondtXAI** is a Python library designed to facilitate explainability and feature allocation across various machine learning models. It visualizes and analyzes feature importance using democratic allocation methods like the D'Hondt method, making it particularly compatible with tree-based models (CatBoost, XGBoost, AdaBoost, Random Forest) and providing ease of use with each.
+> **Status:** DhondtXAI 0.9.1 is an experimental/beta tabular XAI library. It is
+> suitable for research, model inspection, and controlled pilot use. For
+> high-stakes deployment, validate explanations against task-specific benchmarks
+> and compare them with established methods such as SHAP and LIME.
 
-## General Features
-- **Compatibility with Tree-Based Models**: Integrates seamlessly with popular tree-based machine learning algorithms such as CatBoost, XGBoost, AdaBoost, and Random Forest.
-- **Explainability**: After the model is trained, it is possible to determine the importance of features and visualize these importance levels using democratic methods.
-- **User-Friendly Interface**: The selection of alliances and the exclusion of variables is facilitated through a user-friendly interface.
+## Install
 
-## Installation
+After the package is published to PyPI:
 
 ```bash
 pip install dhondtxai
 ```
 
-## Usage Guide
+For local development from this repository:
 
-### 1. Train Your Model
-The library allows training models such as CatBoost, XGBoost, AdaBoost, and Random Forest. Create a classifier using your chosen model type and train it with the training data.
+```bash
+pip install -e .[dev]
+```
 
-### 2. Feature Analysis with DhondtXAI
-Once the model is trained, you can use the DhondtXAI library to analyze and explain the model’s decision processes through feature analysis. While explaining this library, we will go through the Wisconsin Breast Cancer Dataset. The process of identifying, assigning, and visualizing important features follows these steps:
+`scikit-learn` is optional for the core library. Install `.[sklearn]` or `.[dev]`
+when you want to run the included sklearn examples and tests.
 
-#### a. Initializing the DhondtXAI Class
-Create a DhondtXAI object using your trained model:
+## Quick Start
 
 ```python
+import pandas as pd
+from sklearn.datasets import load_breast_cancer
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+
 from dhondtxai import DhondtXAI
 
-# Example model, e.g., CatBoost:
-dhondt_xai = DhondtXAI(model)
+dataset = load_breast_cancer()
+X = pd.DataFrame(dataset.data, columns=dataset.feature_names)
+y = pd.Series(dataset.target)
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.3, random_state=42, stratify=y
+)
+
+model = RandomForestClassifier(n_estimators=200, random_state=42)
+explainer = DhondtXAI(
+    model,
+    background_data=X_train,
+    output_type="probability",
+    class_index=1,
+)
+
+explanation = explainer.explain(
+    X_test.iloc[0],
+    threshold=0.05,
+    redistribute=True,
+    n_background=50,
+)
+
+print(explanation.summary())
+print(explanation.to_feature_frame(top_k=10))
+explainer.plot_waterfall(explanation, top_k=10)
 ```
 
-#### b. Training the Model
-Train your model using DhondtXAI with the training data:
+## Method Summary
+
+For a trained model score `g_c(x)`, DhondtXAI computes a baseline
+
+```text
+mu_c = E[g_c(X)]
+```
+
+and the local model difference
+
+```text
+Delta_c(x) = g_c(x) - mu_c
+```
+
+For a feature or feature alliance `A`, the method estimates a
+background-interventional removal score
+
+```text
+R_A^D(x) = (1 / M) sum_m g_c(x_-A, z_A^(m))
+```
+
+and the local removal effect
+
+```text
+e_A^D(x) = g_c(x) - R_A^D(x)
+```
+
+The samples `z_A^(m)` come from the background data provided through `fit(...)`
+or `background_data`. This is not a Shapley-value or SHAP computation.
+
+These effects are converted into positive and negative explanatory votes. The
+D'Hondt rule allocates explanatory seats separately for supporting and opposing
+evidence. Signed source back-projection keeps positive and negative source
+effects separate. A final conservative projection maps the seat-based
+representation back onto the model difference:
+
+```text
+sum_i phi_i^D(x) = g_c(x) - mu_c
+```
+
+DhondtXAI therefore produces signed local attributions in a SHAP-like additive
+format, but the values should be interpreted as D'Hondt-projected removal-effect
+attributions rather than Shapley values.
+
+## Main Features
+
+- SHAP-independent local feature attributions.
+- Background-interventional feature removal using a background dataset.
+- Optional conditional KNN perturbation for more local replacements.
+- Manual, automatic, hybrid, or no feature alliances.
+- Same-direction or absolute-interaction affinity for automatic alliances.
+- Optional threshold/barrier mechanism.
+- Optional redistribution of below-threshold alliance votes.
+- Positive and negative D'Hondt evidence parliaments.
+- Explicit stable or random D'Hondt tie-breaking.
+- Excluded-feature and below-threshold residual reporting.
+- Projection residual diagnostics.
+- Separate attribution resolution and display seat counts.
+- Local and global explanation outputs.
+- Global alliance co-occurrence matrix for automatic/hybrid alliances.
+- Backward-compatible legacy `feature_importances_` allocation API.
+
+## What DhondtXAI Is Not
+
+DhondtXAI is not SHAP. It does not estimate Shapley values, does not average
+marginal contributions over all feature coalitions, and its explanations should
+not be interpreted as Shapley values. It is a separate D'Hondt-based attribution
+operator that can be compared with SHAP in experiments.
+
+## When To Use
+
+Use DhondtXAI when you want signed local feature attributions, alliance-level
+explanations, threshold/barrier analysis, parliamentary representation of model
+evidence, and global alliance co-occurrence analysis.
+
+## Local Explanation Example
 
 ```python
-dhondt_xai.fit(X_train, y_train)
+import pandas as pd
+from sklearn.datasets import load_breast_cancer
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+
+from dhondtxai import DhondtXAI, plot_signed_parliament
+
+dataset = load_breast_cancer()
+X = pd.DataFrame(dataset.data, columns=dataset.feature_names)
+y = pd.Series(dataset.target)
+
+X_train, X_test, y_train, y_test = train_test_split(
+    X,
+    y,
+    test_size=0.3,
+    random_state=42,
+    stratify=y,
+)
+
+model = RandomForestClassifier(n_estimators=200, random_state=42)
+explainer = DhondtXAI(model, output_type="probability", class_index=1)
+explainer.fit(X_train, y_train)
+
+explanation = explainer.explain(
+    X_test.iloc[0],
+    seats=120,
+    allocation_seats=5000,
+    threshold=0.05,
+    redistribute=True,
+    alliance_mode="user",
+    user_alliances=[
+        ["mean concavity", "mean concave points"],
+        ["mean radius", "mean perimeter", "mean area"],
+    ],
+    n_background=50,
+    lambda_interaction=0.2,
+)
+
+print(explanation.to_feature_frame())
+print(explanation.to_alliance_frame())
+print(explanation.summary(top_k=5))
+print(explanation.diagnostics())
+print(explanation.projection_residual_ratio)
+
+explainer.plot_local_bar(explanation, top_k=10)
+explainer.plot_waterfall(explanation, top_k=10)
+plot_signed_parliament(explanation, mode="signed")
 ```
 
-*Explanation*: This step completes the training of the model, making it capable of performing predictions and determining feature importance.
+## Model Compatibility
 
-#### c. Feature Selection and Alliance Definition
-Select variables, define alliances, and identify variables to exclude from analysis through the user interface:
+DhondtXAI can explain any tabular model that maps input rows to numeric scores.
+It does not require model internals, gradients, tree structure, or SHAP values.
+
+Supported scoring mechanisms:
+
+- sklearn-style `predict_proba`
+- sklearn-style `decision_function`
+- numeric `predict`
+- custom callable `predict_fn`
+
+For already-trained models, you can pass the background data directly:
 
 ```python
-alliances, exclude_features = dhondt_xai.select_features(X.columns)
+explainer = DhondtXAI(
+    trained_model,
+    background_data=X_train,
+    output_type="probability",
+    class_index=1,
+)
 ```
 
-*User Input Explanation*:
-- **Exclude Features**: Users can select features they want to exclude from evaluation. For example: `'mean radius', 'mean texture'` or use `'none'` to exclude no features.
-- **Alliances**: Users can define alliances to group multiple features. For example: `'1,2 and 3'` or `'mean radius, mean texture and mean perimeter'`.
-
-```sql
-Available features:
-1. mean radius
-2. mean texture
-3. mean perimeter
-4. mean area
-...
-Enter the variables you want to exclude from the evaluation (e.g., '2, 4' or 'mean texture, mean area') or 'none': 
-Enter any alliances between the variables (e.g., '2,3 and 4' or 'mean texture, mean perimeter and mean area') or 'none': 
-```
-
-#### d. D'Hondt Method Parameters
-Gather parameters from the user, such as the total vote count, total number of seats, and threshold. Apply the D'Hondt method using these values:
+For custom, Keras, PyTorch, ONNX, or remote models, pass a callable:
 
 ```python
-features, votes = dhondt_xai.apply_dhondt(
-    num_votes=1000000000,
+def predict_fn(X):
+    return my_model_score_function(X)
+
+explainer = DhondtXAI(
+    predict_fn=predict_fn,
+    background_data=X_train,
+    output_type="custom",
+)
+```
+
+If your model expects NumPy arrays instead of pandas DataFrames:
+
+```python
+explainer = DhondtXAI(
+    predict_fn=lambda X: keras_model.predict(X, verbose=0)[:, 1],
+    background_data=X_train,
+    output_type="custom",
+    input_format="numpy",
+)
+```
+
+For more complex conversions, use `input_adapter`:
+
+```python
+explainer = DhondtXAI(
+    predict_fn=predict_fn,
+    background_data=X_train,
+    output_type="custom",
+    input_adapter=lambda X: X.to_numpy(dtype="float32"),
+)
+```
+
+For multi-output regression or custom score matrices, select the target column:
+
+```python
+explainer = DhondtXAI(
+    model,
+    background_data=X_train,
+    output_type="prediction",
+    target_index=1,
+)
+```
+
+For multiclass classification, you may explain the predicted class directly:
+
+```python
+explanation = explainer.explain(
+    X_test.iloc[0],
+    class_index="predicted",
+)
+```
+
+Check compatibility before running a large explanation job:
+
+```python
+print(explainer.check_model_compatibility())
+```
+
+If no background data has been set yet, pass a sample directly:
+
+```python
+print(explainer.check_model_compatibility(X_sample=X_train.head()))
+```
+
+## Alliance Modes
+
+`alliance_mode="none"` treats each feature as its own actor.
+
+`alliance_mode="user"` uses only user-defined disjoint alliances and keeps
+remaining features as individual actors.
+
+`alliance_mode="auto"` estimates pairwise interaction affinity and forms
+automatic alliances. Use `auto_alliance_method="connected_components"` for the
+default graph component rule or `auto_alliance_method="complete_linkage"` for a
+stricter rule requiring all pairs inside an alliance to meet the affinity
+threshold.
+
+`alliance_mode="hybrid"` preserves user-defined alliances and applies automatic
+alliance formation only to the remaining features.
+
+## Threshold And Redistribution
+
+Set `threshold=None` or `threshold_enabled=False` to disable the barrier system.
+
+Set `threshold=0.05` to require at least 5 percent of the explanatory vote.
+
+If `redistribute=True`, below-threshold alliance votes are transferred to
+eligible alliances according to affinity. If `redistribute=False`, below-threshold
+alliances are reported but do not receive seats. Their model contribution is
+kept in `__below_threshold__` and `explanation.below_threshold_residual` instead
+of being forced into eligible features.
+
+If `exclude_features=[...]` is used, excluded feature influence is not assigned
+to the remaining active features. It is reported through `__excluded__` and
+`explanation.excluded_residual`.
+
+## Attribution Resolution And Display Seats
+
+`allocation_seats` controls the numerical D'Hondt resolution used to compute
+continuous attributions. Larger values reduce integer seat rounding effects.
+
+`seats` controls the visible parliament size used in the plotted explanation.
+For example, `allocation_seats=10000` and `seats=100` produces a high-resolution
+attribution with a compact 100-seat visualization.
+
+If `allocation_seats` is not provided, DhondtXAI uses:
+
+```text
+max(5000, 100 * number_of_active_features, seats)
+```
+
+This default prevents small display parliaments such as `seats=10` from
+zeroing out meaningful low-rank features in the numerical attribution.
+
+## Perturbation, Affinity, And Tie-Breaking
+
+`perturbation="interventional"` is the default. It replaces the removed feature
+or feature group with values sampled from the background data:
+
+```text
+g_c(x_-A, z_A)
+```
+
+`perturbation="conditional_knn"` uses nearest background rows according to the
+non-removed features before taking replacement values. This is still an
+approximation, but it reduces unrealistic replacements when correlated tabular
+features are present.
+
+For domain-specific replacements, use `perturbation="user_sampler"`:
+
+```python
+def sampler(x, group, background, n):
+    rows = background.sample(n=n, replace=True, random_state=42).reset_index(drop=True)
+    # edit rows[group] here using domain-specific rules
+    return rows
+
+explainer = DhondtXAI(
+    model,
+    background_data=X_train,
+    perturbation="user_sampler",
+    perturbation_sampler=sampler,
+)
+```
+
+Automatic alliances can use:
+
+- `affinity_mode="same_direction"`: only same-sign single-feature effects can
+  form high-affinity alliances.
+- `affinity_mode="absolute_interaction"`: pairwise interaction magnitude can
+  create affinity even when single-feature effects are weak or opposite.
+
+D'Hondt ties are explicit:
+
+- `tie_break="stable"`: deterministic order-preserving tie-break.
+- `tie_break="random"`: seeded random tie-break using `random_state`.
+
+Stable tie-breaking is reproducible but can favor earlier feature/alliance
+order in exact ties. Increase `allocation_seats` to reduce the practical impact
+of integer ties.
+
+## Outputs
+
+`explanation.to_feature_frame()` returns local feature attributions:
+
+- `feature`
+- `attribution`
+- `abs_attribution`
+- `source_alliance`
+- `effect`
+- `direction`
+- `relative_share`
+- `sign_consistent`
+- `is_residual`
+- residual rows such as `__excluded__` or `__below_threshold__` when relevant
+
+`explanation.to_alliance_frame()` returns alliance-level votes and seats:
+
+- `votes`
+- `positive_votes`
+- `negative_votes`
+- `positive_seats`
+- `negative_seats`
+- `source_attribution`
+- `represented_attribution`
+- `source_raw_attribution`
+- `represented_raw_attribution`
+- threshold status
+
+Diagnostic fields on the explanation object include:
+
+- `raw_attribution_sum`
+- `projection_target`
+- `projection_residual`
+- `projection_residual_ratio`
+- `excluded_residual`
+- `below_threshold_residual`
+- `resolved_output_type`
+- `perturbation`
+- `affinity_mode`
+- `tie_break`
+
+## Global Explanation
+
+```python
+explanations = explainer.explain_many(
+    X_test.head(50),
+    random_state=42,
+    reuse_background_sample=False,
+    n_background=50,
+)
+
+global_frame = explainer.explain_global(
+    X_test,
+    max_rows=50,
+    random_state=42,
+    reuse_background_sample=False,
+    seats=100,
+    alliance_mode="none",
+    n_background=50,
+)
+
+print(global_frame)
+print(explainer.global_alliance_matrix_)
+
+explainer.plot_global_importance(global_frame)
+explainer.plot_global_alliance_heatmap()
+```
+
+The global output includes:
+
+- `global_abs`: mean absolute DhondtXAI attribution
+- `directional`: mean signed attribution
+- `positive`: mean positive attribution
+- `negative`: mean negative attribution
+- `threshold_survival`: frequency of threshold eligibility
+- `is_residual`: marks `__excluded__` and `__below_threshold__` rows
+
+By default, global explanations use controlled but different background samples
+for each row. Set `reuse_background_sample=True` when you want the same random
+background sample reused across all rows.
+
+## Diagnostics And Reports
+
+```python
+print(explanation.summary(top_k=8))
+print(explanation.summary(top_k=8, language="tr"))
+print(explanation.diagnostics())
+```
+
+`projection_residual_ratio` should be monitored. A low value means the raw
+D'Hondt representation naturally matches the local model difference; a high
+value means the conservative projection made a larger correction and the
+explanation should be interpreted with more caution.
+
+Interpretation guide:
+
+- `0.00 - 0.10`: low correction; explanation is closer to raw D'Hondt evidence.
+- `0.10 - 0.50`: medium correction; interpret with caution.
+- `> 0.50`: high correction; raw D'Hondt evidence required a large projection.
+
+The text report prints an explicit warning when this correction is medium or
+high.
+
+## Plots
+
+- `plot_local_bar(...)`: signed local feature bar plot.
+- `plot_waterfall(...)`: baseline-to-score additive waterfall.
+- `plot_signed_parliament(...)`: positive/negative evidence parliament.
+- `plot_global_importance(...)`: residual-aware global importance.
+- `plot_global_alliance_heatmap(...)`: global alliance co-occurrence matrix.
+
+## Limitations
+
+- DhondtXAI is a beta tabular XAI library, not a mature SHAP/LIME replacement.
+- Current removal sampling is background-interventional, not fully conditional.
+- `conditional_knn` is an approximate local sampler, not a causal conditional
+  distribution estimator.
+- `user_sampler` can improve domain realism, but its validity depends on the
+  sampler supplied by the user.
+- Low `allocation_seats` values can produce sparse or order-sensitive
+  attributions; the default uses high-resolution allocation.
+- Stable D'Hondt tie-breaking is order-preserving and should be documented when
+  exact ties matter.
+- Background replacement can create out-of-distribution rows for strongly
+  correlated features.
+- Auto-alliance and interaction estimation can be expensive for high-dimensional data.
+- Projection residuals should be monitored and reported.
+- Probability-scale explanations may be less additive than logit-scale explanations.
+- Below-threshold and excluded residuals should be interpreted explicitly.
+
+## Building A PyPI-Ready Package
+
+The package metadata includes README long description, version, license,
+citation, and optional sklearn/dev extras. To build local distribution files:
+
+```bash
+python -m pip install --upgrade build twine
+python -m build
+python -m twine check dist/*
+```
+
+Then a built wheel can be installed locally with:
+
+```bash
+pip install dist/dhondtxai-0.9.1-py3-none-any.whl
+```
+
+Publishing to PyPI requires a PyPI API token:
+
+```bash
+python -m twine upload dist/*
+```
+
+## Legacy API
+
+The previous global feature-importance workflow is still available:
+
+```python
+features, votes, excluded = explainer.apply_dhondt(
+    num_votes=100000000,
     num_mps=600,
-    threshold=None,  # Threshold can be disabled with 'None'
-    alliances=alliances,
-    exclude_features=exclude_features
+    threshold=5,
 )
+
+seats = explainer.dhondt_method(votes, 600, excluded)
+explainer.plot_results(features, seats)
 ```
 
-*User Input Explanation*:
-- **Total Votes**: The total number of votes to be distributed among all features evaluated by the model. Example: `1000000000`
-- **Total Seats**: The total number of representatives used to determine which features are prioritized using the D'Hondt method. Example: `600`
-- **Threshold**: Checks if features exceed a certain threshold. If not specified, enter `'None'`.
+This legacy path uses `model.feature_importances_`. The new proposed method is
+`explain(...)`.
 
-```perl
-Enter the total number of votes: 1000000000
-Enter the total number of seats: 600
-Enter the threshold (as a percentage) or 'None': none
-```
+## Citation
 
-#### e. Viewing D'Hondt Results
-Display the results obtained using the D'Hondt method:
-
-```python
-print("Votes per Feature/Alliance:")
-for feature, vote in zip(features, votes):
-    print(f"{feature}: {int(vote)} votes")
-
-# Allocate seats using the D'Hondt method
-seats = dhondt_xai.dhondt_method(votes, num_mps)
-print("
-D'Hondt Method Results:")
-for feature, seat in zip(features, seats):
-    print(f"{feature}: {seat} MPs")
-```
-
-*Example Output*:
-
-```yaml
-Votes per Feature/Alliance:
-mean radius: 6271130 votes
-mean texture: 20068244 votes
-...
-
-D'Hondt Method Results:
-mean radius: 37 MPs
-mean texture: 121 MPs
-...
-```
-#### f. Plotting Results Using plot_parliament
-
-Visualize the MPs (seats) allocated to each feature using a bar plot, where the bar color indicates the correlation direction with the target variable:
-
-```python
-# Plot the results using plot_parliament
-dhondt_xai.plot_results(features, seats)
-```
-- **Bar Plot**: Displays the number of MPs (importance) each feature received. This highlights which features have higher importance.
-- **Color Coding** The bars are colored based on the correlation with the target variable:
-  - **Blue:** Features positively correlated with the target variable.
-  - **Red:** Features negatively correlated with the target variable.
-
-### Feature Importance Using D'Hondt Method (Color-Coded by Correlation)
-![Feature Importance Bar Plot](exampleimages/barplotview.png)
-
-#### g. Visualizing Parliamentary Representation
-Visualize the results as a parliament diagram:
-
-```python
-from dhondtxai import plot_parliament
-
-plot_parliament(
-    total_seats=num_mps,
-    features=features,
-    seats=seats,
-    slices=30,  # Defines the number of slices across the semicircular parliament view
-    additional_rows=10  # Adjusts the size of the empty inner circle in the parliament view
-)
-```
-
-*Explanation*: This step visualizes the results determined by the D'Hondt method, presenting the number of votes and representatives of features/alliances graphically, in parliament view
-  
-  ### Parliamentary Representation Example
-![Parliamentary Representation](exampleimages/parliamentview.png)
-
-### 3. Compatible Models
-
-- **CatBoost**: Directly supports feature analysis, one of the most popular tree-based models.
-- **XGBoost**: A powerful tree-based algorithm commonly used with large datasets.
-- **AdaBoost**: Suitable for quick and effective feature analysis, boosting weak learners.
-- **Random Forest**: A robust model for feature combination and interaction, effective with large-scale datasets.
-
-### 4. Citation
-If you use DhondtXAI in your research or applications, please cite it as follows:
-
-T. B. Donmez, "Explainable AI through a Democratic Lens: DhondtXAI for Proportional Feature Importance Using the D'Hondt Method," 2024. Available: [https://doi.org/10.48550/arXiv.2411.05196](https://doi.org/10.48550/arXiv.2411.05196)
-
-
-## Conclusion
-The DhondtXAI library is a flexible tool that provides feature allocation and importance ranking compatible with different machine learning models. It employs democratic methods like the D'Hondt method to create a more understandable and fair explanation model.
+T. B. Donmez, "Explainable AI through a Democratic Lens: DhondtXAI for
+Proportional Feature Importance Using the D'Hondt Method," 2024.
+https://doi.org/10.48550/arXiv.2411.05196
