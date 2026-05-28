@@ -7,7 +7,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 
-from dhondtxai import DhondtXAI, __version__
+from dhondtxai import DhondtValues, DhondtXAI, Explainer, __version__
 
 
 class AddModel:
@@ -73,9 +73,25 @@ class LabelModel:
         return np.array(["yes"] * len(X))
 
 
+class KerasLikeModel:
+    def predict(self, X, verbose=0):
+        return np.asarray(X).sum(axis=1)
+
+
 def make_add_explainer():
     background = pd.DataFrame({"a": [0.0] * 20, "b": [0.0] * 20, "c": [0.0] * 20})
     return DhondtXAI(AddModel(), background_data=background, output_type="prediction")
+
+
+def make_adapter_data():
+    X = pd.DataFrame(
+        {
+            "a": [-2.0, -1.0, -0.5, 0.5, 1.0, 2.0, 1.5, -1.5],
+            "b": [-1.0, -0.5, 0.0, 0.5, 1.0, 1.5, -0.5, 0.5],
+        }
+    )
+    y = ((X["a"] + X["b"]) > 0).astype(int)
+    return X, y
 
 
 def test_no_shap_dependency_loaded():
@@ -468,6 +484,7 @@ def test_compatibility_checker_reports_success():
     assert report["compatible"] is True
     assert report["numeric"] is True
     assert report["resolved_output_type"] == "custom"
+    assert report["model_adapter"] == "callable"
 
 
 def test_compatibility_checker_works_with_x_sample_without_background():
@@ -480,7 +497,138 @@ def test_compatibility_checker_works_with_x_sample_without_background():
 
 
 def test_package_version_exposed():
-    assert __version__ == "0.9.1"
+    assert __version__ == "0.9.2"
+
+
+def test_shap_like_explainer_values_api():
+    background = pd.DataFrame({"a": [0.0] * 10, "b": [0.0] * 10, "c": [0.0] * 10})
+    explainer = Explainer(AddModel(), background)
+    dhondtxai_values = explainer(
+        pd.DataFrame([{"a": 1.0, "b": 2.0, "c": 3.0}]),
+        n_background=5,
+        allocation_seats=1000,
+    )
+    assert isinstance(dhondtxai_values, DhondtValues)
+    assert dhondtxai_values.values.shape == (1, 3)
+    assert dhondtxai_values.dhondtxai_values.shape == (1, 3)
+    assert dhondtxai_values.feature_names == ["a", "b", "c"]
+    assert dhondtxai_values.base_values.shape == (1,)
+    assert dhondtxai_values[0].dhondtxai_values.shape == (3,)
+    assert dhondtxai_values[0].base_value == pytest.approx(dhondtxai_values.base_values[0])
+
+
+def test_shap_like_single_row_values_are_1d():
+    explainer = make_add_explainer()
+    dhondtxai_values = explainer.dhondtxai_values(
+        pd.Series({"a": 1.0, "b": 2.0, "c": 3.0}),
+        n_background=5,
+        allocation_seats=1000,
+    )
+    assert dhondtxai_values.values.shape == (3,)
+    assert dhondtxai_values.deltas == pytest.approx(6.0)
+    assert np.sum(dhondtxai_values.values) == pytest.approx(dhondtxai_values.deltas)
+
+
+def test_score_fn_alias_for_custom_models():
+    background = pd.DataFrame({"a": [0.0] * 10, "b": [0.0] * 10})
+
+    def score_fn(X):
+        return np.asarray(X).sum(axis=1)
+
+    explainer = Explainer(score_fn=score_fn, background_data=background)
+    dhondtxai_values = explainer(pd.Series({"a": 1.0, "b": 2.0}), n_background=5)
+    assert dhondtxai_values.values.shape == (2,)
+    assert dhondtxai_values.deltas == pytest.approx(3.0)
+
+
+def test_xgboost_sklearn_classifier_auto_adapter_if_installed():
+    xgb = pytest.importorskip("xgboost")
+    X, y = make_adapter_data()
+    model = xgb.XGBClassifier(
+        n_estimators=5,
+        max_depth=2,
+        learning_rate=0.5,
+        eval_metric="logloss",
+        random_state=0,
+    )
+    model.fit(X, y)
+    explainer = DhondtXAI(model, background_data=X, output_type="auto")
+    explanation = explainer.explain(X.iloc[0], n_background=4)
+    assert explanation.resolved_output_type == "probability"
+    assert np.isfinite(explanation.score)
+
+
+def test_xgboost_native_booster_auto_adapter_if_installed():
+    xgb = pytest.importorskip("xgboost")
+    X, y = make_adapter_data()
+    dtrain = xgb.DMatrix(X.to_numpy(), label=y.to_numpy(), feature_names=list(X.columns))
+    booster = xgb.train(
+        {"objective": "binary:logistic", "eval_metric": "logloss", "verbosity": 0},
+        dtrain,
+        num_boost_round=5,
+    )
+    explainer = DhondtXAI(booster, background_data=X, output_type="prediction")
+    report = explainer.check_model_compatibility()
+    explanation = explainer.explain(X.iloc[0], n_background=4)
+    assert report["model_adapter"] == "xgboost"
+    assert 0.0 <= explanation.score <= 1.0
+
+
+def test_lightgbm_native_booster_auto_adapter_if_installed():
+    lgb = pytest.importorskip("lightgbm")
+    X, y = make_adapter_data()
+    dataset = lgb.Dataset(X, label=y)
+    booster = lgb.train(
+        {"objective": "binary", "metric": "binary_logloss", "verbosity": -1, "seed": 0},
+        dataset,
+        num_boost_round=5,
+    )
+    explainer = DhondtXAI(booster, background_data=X, output_type="prediction")
+    report = explainer.check_model_compatibility()
+    explanation = explainer.explain(X.iloc[0], n_background=4)
+    assert report["model_adapter"] == "lightgbm"
+    assert 0.0 <= explanation.score <= 1.0
+
+
+def test_catboost_classifier_auto_adapter_if_installed():
+    cb = pytest.importorskip("catboost")
+    X, y = make_adapter_data()
+    model = cb.CatBoostClassifier(iterations=5, depth=2, learning_rate=0.5, verbose=False, random_seed=0)
+    model.fit(X, y)
+    explainer = DhondtXAI(model, background_data=X, output_type="auto")
+    report = explainer.check_model_compatibility()
+    explanation = explainer.explain(X.iloc[0], n_background=4)
+    assert report["model_adapter"] == "catboost"
+    assert explanation.resolved_output_type == "probability"
+
+
+def test_torch_module_auto_adapter_if_installed():
+    torch = pytest.importorskip("torch")
+    X, _ = make_adapter_data()
+
+    class TorchModel(torch.nn.Module):
+        def forward(self, X_tensor):
+            return torch.sigmoid(X_tensor.sum(dim=1))
+
+    explainer = DhondtXAI(TorchModel(), background_data=X, output_type="prediction")
+    report = explainer.check_model_compatibility()
+    explanation = explainer.explain(X.iloc[0], n_background=4)
+    assert report["model_adapter"] == "torch"
+    assert 0.0 <= explanation.score <= 1.0
+
+
+def test_keras_like_model_adapter():
+    X, _ = make_adapter_data()
+    explainer = DhondtXAI(
+        KerasLikeModel(),
+        background_data=X,
+        output_type="prediction",
+        model_adapter="keras",
+    )
+    report = explainer.check_model_compatibility()
+    explanation = explainer.explain(X.iloc[0], n_background=4)
+    assert report["model_adapter"] == "keras"
+    assert np.isfinite(explanation.score)
 
 
 def test_plot_functions_smoke():

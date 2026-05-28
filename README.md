@@ -5,17 +5,20 @@ tabular models. It does not compute SHAP values or approximate Shapley values.
 Instead, it defines a separate D'Hondt-projected removal-effect attribution
 operator. SHAP can still be used as an external benchmark.
 
-> **Status:** DhondtXAI 0.9.1 is an experimental/beta tabular XAI library. It is
+DhondtXAI can explain any tabular model that can be adapted to a row-wise
+numeric scoring function. It includes automatic adapters for common model
+families such as sklearn-style estimators, XGBoost, LightGBM, CatBoost, PyTorch
+modules, and Keras-like models.
+
+> **Status:** DhondtXAI 0.9.2 is an experimental/beta tabular XAI library. It is
 > suitable for research, model inspection, and controlled pilot use. For
 > high-stakes deployment, validate explanations against task-specific benchmarks
 > and compare them with established methods such as SHAP and LIME.
 
 ## Install
 
-After the package is published to PyPI:
-
 ```bash
-pip install dhondtxai
+pip install dhondtxai==0.9.2
 ```
 
 For local development from this repository:
@@ -24,8 +27,17 @@ For local development from this repository:
 pip install -e .[dev]
 ```
 
-`scikit-learn` is optional for the core library. Install `.[sklearn]` or `.[dev]`
-when you want to run the included sklearn examples and tests.
+`scikit-learn` and other ML frameworks are optional for the core library. Use
+extras when you want adapter dependencies:
+
+```bash
+pip install "dhondtxai[sklearn]"
+pip install "dhondtxai[xgboost]"
+pip install "dhondtxai[lightgbm]"
+pip install "dhondtxai[catboost]"
+pip install "dhondtxai[torch]"
+pip install "dhondtxai[all-models]"
+```
 
 ## Quick Start
 
@@ -35,7 +47,7 @@ from sklearn.datasets import load_breast_cancer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 
-from dhondtxai import DhondtXAI
+from dhondtxai import Explainer
 
 dataset = load_breast_cancer()
 X = pd.DataFrame(dataset.data, columns=dataset.feature_names)
@@ -46,24 +58,59 @@ X_train, X_test, y_train, y_test = train_test_split(
 )
 
 model = RandomForestClassifier(n_estimators=200, random_state=42)
-explainer = DhondtXAI(
-    model,
-    background_data=X_train,
-    output_type="probability",
-    class_index=1,
-)
+model.fit(X_train, y_train)
+explainer = Explainer(model, X_train)
 
-explanation = explainer.explain(
-    X_test.iloc[0],
+dhondtxai_values = explainer(
+    X_test.head(5),
     threshold=0.05,
     redistribute=True,
     n_background=50,
 )
 
-print(explanation.summary())
-print(explanation.to_feature_frame(top_k=10))
-explainer.plot_waterfall(explanation, top_k=10)
+print(dhondtxai_values.values)
+print(dhondtxai_values.base_values)
+print(dhondtxai_values.to_frame(row=0, top_k=10))
+print(dhondtxai_values.summary(row=0))
+
+explainer.plot_waterfall(dhondtxai_values[0], top_k=10)
 ```
+
+`dhondtxai_values.values` is the DhondtXAI equivalent of SHAP-style attribution
+arrays. The values are not Shapley values; they are D'Hondt-projected
+removal-effect attributions.
+
+## SHAP-Like Values API
+
+The recommended public API mirrors the familiar `shap.Explainer` workflow:
+
+```python
+import dhondtxai as dxai
+
+explainer = dxai.Explainer(model, X_background)
+dhondtxai_values = explainer(X_to_explain)
+
+dhondtxai_values.values          # numpy attribution array
+dhondtxai_values.dhondtxai_values # alias for values
+dhondtxai_values.base_values     # baselines
+dhondtxai_values.scores          # model scores explained by DhondtXAI
+dhondtxai_values.feature_names   # feature order
+```
+
+For a single row, `dhondtxai_values.values` has shape `(n_features,)`. For a
+table, it has shape `(n_rows, n_features)`. Detailed local objects are still
+available:
+
+```python
+local_explanation = dhondtxai_values[0]
+local_explanation.dhondtxai_values
+local_explanation.to_feature_frame()
+local_explanation.summary()
+```
+
+Residual categories such as excluded or below-threshold effects are stored in
+`dhondtxai_values.residual_values` so the main value matrix remains aligned with
+the original feature columns.
 
 ## Method Summary
 
@@ -148,7 +195,7 @@ from sklearn.datasets import load_breast_cancer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 
-from dhondtxai import DhondtXAI, plot_signed_parliament
+from dhondtxai import Explainer, plot_signed_parliament
 
 dataset = load_breast_cancer()
 X = pd.DataFrame(dataset.data, columns=dataset.feature_names)
@@ -163,8 +210,8 @@ X_train, X_test, y_train, y_test = train_test_split(
 )
 
 model = RandomForestClassifier(n_estimators=200, random_state=42)
-explainer = DhondtXAI(model, output_type="probability", class_index=1)
-explainer.fit(X_train, y_train)
+model.fit(X_train, y_train)
+explainer = Explainer(model, X_train)
 
 explanation = explainer.explain(
     X_test.iloc[0],
@@ -197,44 +244,138 @@ plot_signed_parliament(explanation, mode="signed")
 DhondtXAI can explain any tabular model that maps input rows to numeric scores.
 It does not require model internals, gradients, tree structure, or SHAP values.
 
-Supported scoring mechanisms:
+Supported model families:
 
-- sklearn-style `predict_proba`
-- sklearn-style `decision_function`
-- numeric `predict`
-- custom callable `predict_fn`
+- sklearn estimators and sklearn `Pipeline` objects
+- XGBoost sklearn estimators
+- native XGBoost `Booster`
+- native LightGBM `Booster`
+- CatBoost estimators
+- PyTorch `nn.Module`
+- Keras-like models
+- custom scoring functions
+
+The recommended API does not require you to call model-specific scoring methods
+yourself. The default `model_adapter="auto"` and `input_format="auto"` select an
+input format automatically:
+
+| Model family | Typical object | Automatic input |
+|---|---|---|
+| sklearn / sklearn Pipeline | `RandomForestClassifier`, `Pipeline`, `XGBClassifier` sklearn API | pandas DataFrame |
+| native XGBoost | `xgboost.Booster` | `xgboost.DMatrix` |
+| native LightGBM | `lightgbm.Booster` | pandas DataFrame |
+| CatBoost | `CatBoostClassifier`, `CatBoostRegressor` | pandas DataFrame |
+| PyTorch | `torch.nn.Module` | `torch.float32` tensor |
+| Keras-like | Keras-compatible model object | NumPy array |
+| custom | row-wise scoring function | controlled by `input_format` or `input_adapter` |
 
 For already-trained models, you can pass the background data directly:
 
 ```python
-explainer = DhondtXAI(
-    trained_model,
-    background_data=X_train,
-    output_type="probability",
-    class_index=1,
-)
+explainer = Explainer(trained_model, X_train)
+dhondtxai_values = explainer(X_test)
 ```
+
+### XGBoost
+
+sklearn-style XGBoost estimators work directly:
+
+```python
+from xgboost import XGBClassifier
+
+model = XGBClassifier(...).fit(X_train, y_train)
+
+explainer = Explainer(model, X_train)
+dhondtxai_values = explainer(X_test)
+```
+
+Native XGBoost `Booster` objects are adapted automatically:
+
+```python
+import xgboost as xgb
+
+dtrain = xgb.DMatrix(X_train, label=y_train, feature_names=list(X_train.columns))
+booster = xgb.train({"objective": "binary:logistic"}, dtrain)
+
+explainer = Explainer(booster, X_train)
+dhondtxai_values = explainer(X_test)
+```
+
+For native binary boosters, DhondtXAI uses the numeric score returned by the
+booster as the explained model output.
+
+### LightGBM
+
+```python
+import lightgbm as lgb
+
+dataset = lgb.Dataset(X_train, label=y_train)
+booster = lgb.train({"objective": "binary"}, dataset)
+
+explainer = Explainer(booster, X_train)
+dhondtxai_values = explainer(X_test)
+```
+
+### CatBoost
+
+```python
+from catboost import CatBoostClassifier
+
+model = CatBoostClassifier(verbose=False).fit(X_train, y_train)
+
+explainer = Explainer(model, X_train)
+dhondtxai_values = explainer(X_test)
+```
+
+### PyTorch
+
+```python
+import torch
+
+class Net(torch.nn.Module):
+    def forward(self, X):
+        return torch.sigmoid(self.linear(X)).squeeze(-1)
+
+model = Net()
+
+explainer = Explainer(model, X_train)
+dhondtxai_values = explainer(X_test)
+```
+
+DhondtXAI converts tabular rows to `torch.float32` tensors automatically.
+
+### Keras-like Models
+
+```python
+explainer = Explainer(
+    keras_model,
+    X_train,
+    model_adapter="keras",
+)
+
+dhondtxai_values = explainer(X_test)
+```
+
+Keras-like models receive NumPy arrays by default.
 
 For custom, Keras, PyTorch, ONNX, or remote models, pass a callable:
 
 ```python
-def predict_fn(X):
+def score_fn(X):
     return my_model_score_function(X)
 
-explainer = DhondtXAI(
-    predict_fn=predict_fn,
+explainer = Explainer(
+    score_fn=score_fn,
     background_data=X_train,
-    output_type="custom",
 )
 ```
 
 If your model expects NumPy arrays instead of pandas DataFrames:
 
 ```python
-explainer = DhondtXAI(
-    predict_fn=lambda X: keras_model.predict(X, verbose=0)[:, 1],
+explainer = Explainer(
+    score_fn=lambda X: keras_model.predict(X, verbose=0)[:, 1],
     background_data=X_train,
-    output_type="custom",
     input_format="numpy",
 )
 ```
@@ -242,21 +383,30 @@ explainer = DhondtXAI(
 For more complex conversions, use `input_adapter`:
 
 ```python
-explainer = DhondtXAI(
-    predict_fn=predict_fn,
+explainer = Explainer(
+    score_fn=score_fn,
     background_data=X_train,
-    output_type="custom",
     input_adapter=lambda X: X.to_numpy(dtype="float32"),
+)
+```
+
+When automatic inference is not enough, override the adapter explicitly:
+
+```python
+explainer = Explainer(
+    model,
+    X_train,
+    model_adapter="xgboost",   # sklearn, xgboost, lightgbm, catboost, torch, keras
+    input_format="auto",
 )
 ```
 
 For multi-output regression or custom score matrices, select the target column:
 
 ```python
-explainer = DhondtXAI(
+explainer = Explainer(
     model,
-    background_data=X_train,
-    output_type="prediction",
+    X_train,
     target_index=1,
 )
 ```
@@ -354,9 +504,9 @@ def sampler(x, group, background, n):
     # edit rows[group] here using domain-specific rules
     return rows
 
-explainer = DhondtXAI(
+explainer = Explainer(
     model,
-    background_data=X_train,
+    X_train,
     perturbation="user_sampler",
     perturbation_sampler=sampler,
 )
@@ -522,7 +672,7 @@ python -m twine check dist/*
 Then a built wheel can be installed locally with:
 
 ```bash
-pip install dist/dhondtxai-0.9.1-py3-none-any.whl
+pip install dist/dhondtxai-0.9.2-py3-none-any.whl
 ```
 
 Publishing to PyPI requires a PyPI API token:

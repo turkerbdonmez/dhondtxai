@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.9.2
+
+- Added SHAP-like `Explainer(model, background)` and callable values API:
+  `dhondtxai_values = explainer(X)`.
+- Added `DhondtValues` with `.values`, `.dhondtxai_values`, `.base_values`,
+  `.scores`, `.feature_names`, and row-level explanation access.
+- Added `score_fn` as the public custom scoring-function alias.
+- Added `model_adapter="auto"` scoring support for native XGBoost Booster,
+  LightGBM Booster, CatBoost, PyTorch modules, and Keras-like models.
+- Added `input_format="auto"` default to select DataFrame, NumPy, DMatrix, or
+  Tensor inputs based on the resolved adapter.
+- Added optional dependency extras for XGBoost, LightGBM, CatBoost, Torch, and
+  all model adapters.
+- Added compatibility metadata reporting for resolved model adapters.
+- Added adapter tests for XGBoost, LightGBM, CatBoost, PyTorch, and Keras-like
+  models when those optional packages are installed.
+
 ## 0.9.1
 
 - Added PyPI-ready metadata, README long description, and package `__version__`.

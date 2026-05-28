@@ -3,7 +3,7 @@ from sklearn.datasets import load_breast_cancer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 
-from dhondtxai import DhondtXAI, plot_signed_parliament
+from dhondtxai import Explainer, plot_signed_parliament
 
 
 def main():
@@ -20,11 +20,11 @@ def main():
     )
 
     model = RandomForestClassifier(n_estimators=200, random_state=42)
-    explainer = DhondtXAI(model, output_type="probability", class_index=1, random_state=42)
-    explainer.fit(X_train, y_train)
+    model.fit(X_train, y_train)
+    explainer = Explainer(model, X_train, random_state=42)
 
-    explanation = explainer.explain(
-        X_test.iloc[0],
+    dhondtxai_values = explainer(
+        X_test.head(3),
         seats=120,
         allocation_seats=5000,
         threshold=0.05,
@@ -40,7 +40,10 @@ def main():
         perturbation="interventional",
         tie_break="stable",
     )
+    explanation = dhondtxai_values[0]
 
+    print("DhondtXAI values")
+    print(dhondtxai_values.values)
     print(f"Model score: {explanation.score:.4f}")
     print(f"Baseline: {explanation.baseline:.4f}")
     print(f"Delta: {explanation.delta:.4f}")

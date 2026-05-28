@@ -5,7 +5,7 @@ from setuptools import setup, find_packages
 
 
 ROOT = Path(__file__).resolve().parent
-VERSION = "0.9.1"
+VERSION = "0.9.2"
 README = (ROOT / "README.md").read_text(encoding="utf-8")
 
 setup(
@@ -20,6 +20,11 @@ setup(
     ],
     extras_require={
         'sklearn': ['scikit-learn'],
+        'xgboost': ['xgboost'],
+        'lightgbm': ['lightgbm'],
+        'catboost': ['catboost'],
+        'torch': ['torch'],
+        'all-models': ['scikit-learn', 'xgboost', 'lightgbm', 'catboost', 'torch'],
         'dev': ['pytest', 'scikit-learn'],
     },
     description="SHAP-independent D'Hondt-projected removal-effect attributions for tabular XAI",

@@ -56,6 +56,30 @@ class DhondtExplanation:
     affinity_mode: str
     tie_break: str
 
+    @property
+    def feature_names(self):
+        return [feature for feature in self.feature_attributions if not str(feature).startswith("__")]
+
+    @property
+    def values(self):
+        return np.asarray([self.feature_attributions[feature] for feature in self.feature_names], dtype=float)
+
+    @property
+    def dhondtxai_values(self):
+        return self.values
+
+    @property
+    def base_value(self):
+        return self.baseline
+
+    @property
+    def residual_values(self):
+        return {
+            feature: value
+            for feature, value in self.feature_attributions.items()
+            if str(feature).startswith("__")
+        }
+
     def to_feature_frame(self, top_k=None, include_residuals=True):
         rows = []
         for feature, value in self.feature_attributions.items():
@@ -290,6 +314,64 @@ class DhondtExplanation:
         ]
 
 
+class DhondtValues:
+    """SHAP-like DhondtXAI values container.
+
+    The numerical attributions live in ``values`` and ``dhondtxai_values``.
+    Residual categories such as ``__excluded__`` are kept separately in
+    ``residual_values`` so the feature matrix stays aligned with the original
+    model inputs.
+    """
+
+    def __init__(self, explanations, feature_names, data=None, single_output=False):
+        self.explanations = list(explanations)
+        self.feature_names = list(feature_names)
+        self.single_output = bool(single_output)
+        matrix = np.asarray(
+            [
+                [exp.feature_attributions.get(feature, 0.0) for feature in self.feature_names]
+                for exp in self.explanations
+            ],
+            dtype=float,
+        )
+        base_values = np.asarray([exp.baseline for exp in self.explanations], dtype=float)
+        scores = np.asarray([exp.score for exp in self.explanations], dtype=float)
+        deltas = np.asarray([exp.delta for exp in self.explanations], dtype=float)
+        residual_values = [exp.residual_values for exp in self.explanations]
+
+        self.values = matrix[0] if self.single_output else matrix
+        self.dhondtxai_values = self.values
+        self.base_values = float(base_values[0]) if self.single_output else base_values
+        self.scores = float(scores[0]) if self.single_output else scores
+        self.deltas = float(deltas[0]) if self.single_output else deltas
+        self.residual_values = residual_values[0] if self.single_output else residual_values
+        self.data = data
+
+    @property
+    def base_value(self):
+        if self.single_output:
+            return self.base_values
+        return self.base_values[0] if len(self.explanations) == 1 else self.base_values
+
+    def __array__(self, dtype=None):
+        return np.asarray(self.values, dtype=dtype)
+
+    def __len__(self):
+        return len(self.explanations)
+
+    def __getitem__(self, index):
+        return self.explanations[index]
+
+    def to_frame(self, row=0, top_k=None, include_residuals=True):
+        return self.explanations[row].to_feature_frame(top_k=top_k, include_residuals=include_residuals)
+
+    def summary(self, row=0, top_k=5, language="en"):
+        return self.explanations[row].summary(top_k=top_k, language=language)
+
+    def diagnostics(self, row=0):
+        return self.explanations[row].diagnostics()
+
+
 class DhondtXAI:
     """D'Hondt-based local attribution without using SHAP values.
 
@@ -304,11 +386,13 @@ class DhondtXAI:
         model=None,
         predict_fn=None,
         background_data=None,
+        score_fn=None,
         output_type="auto",
         class_index=1,
         target_index=None,
-        input_format="dataframe",
+        input_format="auto",
         input_adapter=None,
+        model_adapter="auto",
         perturbation="interventional",
         perturbation_sampler=None,
         knn_neighbors=25,
@@ -319,16 +403,40 @@ class DhondtXAI:
         random_state=42,
         strict_features=True,
     ):
-        if predict_fn is None and callable(model) and not any(
+        if score_fn is not None:
+            if predict_fn is not None:
+                raise ValueError("Use either score_fn or predict_fn, not both.")
+            predict_fn = score_fn
+
+        if predict_fn is not None and background_data is None and not callable(predict_fn):
+            background_data = predict_fn
+            predict_fn = None
+
+        torch_like_model = model is not None and hasattr(model, "forward") and hasattr(model, "eval")
+        if predict_fn is None and callable(model) and not torch_like_model and not any(
             hasattr(model, attr) for attr in ("predict", "predict_proba", "decision_function")
         ):
             predict_fn = model
             model = None
 
         if model is None and predict_fn is None:
-            raise ValueError("Provide either model or predict_fn.")
-        if input_format not in {"dataframe", "numpy"}:
-            raise ValueError("input_format must be 'dataframe' or 'numpy'.")
+            raise ValueError("Provide either model or score_fn.")
+        if input_format not in {"auto", "dataframe", "numpy"}:
+            raise ValueError("input_format must be 'auto', 'dataframe', or 'numpy'.")
+        if model_adapter not in {
+            "auto",
+            "sklearn",
+            "xgboost",
+            "lightgbm",
+            "catboost",
+            "torch",
+            "keras",
+            "callable",
+        }:
+            raise ValueError(
+                "model_adapter must be auto, sklearn, xgboost, lightgbm, catboost, "
+                "torch, keras, or callable."
+            )
         if perturbation not in {"interventional", "conditional_knn", "user_sampler"}:
             raise ValueError("perturbation must be 'interventional', 'conditional_knn', or 'user_sampler'.")
         if perturbation == "user_sampler" and perturbation_sampler is None:
@@ -350,6 +458,7 @@ class DhondtXAI:
         self.target_index = target_index
         self.input_format = input_format
         self.input_adapter = input_adapter
+        self.model_adapter = model_adapter
         self.perturbation = perturbation
         self.perturbation_sampler = perturbation_sampler
         self.knn_neighbors = int(knn_neighbors)
@@ -743,6 +852,62 @@ class DhondtXAI:
         self.last_explanation = explanation
         return explanation
 
+    def __call__(self, X, **kwargs):
+        return self.dhondtxai_values(X, **kwargs)
+
+    def dhondtxai_values(
+        self,
+        X,
+        max_rows=None,
+        random_state=None,
+        reuse_background_sample=False,
+        **kwargs,
+    ):
+        return self.values(
+            X,
+            max_rows=max_rows,
+            random_state=random_state,
+            reuse_background_sample=reuse_background_sample,
+            **kwargs,
+        )
+
+    def values(self, X, max_rows=None, random_state=None, reuse_background_sample=False, **kwargs):
+        """Return SHAP-like DhondtXAI attribution values.
+
+        For a single row, ``values`` is a one-dimensional array with one value
+        per original feature. For a table, ``values`` is a two-dimensional
+        ``n_rows x n_features`` matrix. Detailed local explanations remain
+        available through the returned object's ``explanations`` attribute.
+        """
+        if self.background_data is None or self.features is None:
+            raise ValueError("Call fit(...) or provide background_data before values(...).")
+
+        single_output = self._is_single_input(X)
+        if single_output:
+            explanation = self.explain(X, random_state=random_state, **kwargs)
+            return DhondtValues(
+                [explanation],
+                self.features,
+                data=self._single_input_data(X),
+                single_output=True,
+            )
+
+        X_frame = self.background_data if X is None else self._ensure_frame(X)
+        if max_rows is not None:
+            X_frame = X_frame.iloc[:max_rows]
+        explanations = self.explain_many(
+            X_frame,
+            random_state=random_state,
+            reuse_background_sample=reuse_background_sample,
+            **kwargs,
+        )
+        return DhondtValues(
+            explanations,
+            self.features,
+            data=X_frame[self.features].to_numpy(),
+            single_output=False,
+        )
+
     def explain_many(self, X, max_rows=None, random_state=None, reuse_background_sample=False, **kwargs):
         X = self.background_data if X is None else self._ensure_frame(X)
         if max_rows is not None:
@@ -841,6 +1006,7 @@ class DhondtXAI:
             return {
                 "compatible": True,
                 "input_format": self.input_format if self.input_adapter is None else "input_adapter",
+                "model_adapter": self._resolve_model_adapter(),
                 "output_type": self.output_type,
                 "resolved_output_type": resolved_output_type,
                 "raw_output_shape": tuple(np.asarray(raw_output).shape),
@@ -856,7 +1022,7 @@ class DhondtXAI:
                 "problem": str(exc),
                 "suggestion": (
                     "Check output_type, class_index/target_index, input_format/input_adapter, "
-                    "or provide a numeric predict_fn."
+                    "or provide a numeric score_fn."
                 ),
             }
         finally:
@@ -1125,6 +1291,17 @@ class DhondtXAI:
             frame.columns = self.features
         return frame
 
+    def _is_single_input(self, X):
+        if isinstance(X, (pd.Series, dict)):
+            return True
+        if isinstance(X, pd.DataFrame):
+            return False
+        return np.asarray(X).ndim == 1
+
+    def _single_input_data(self, X):
+        series = self._ensure_series(X)
+        return series[self.features].to_numpy()
+
     def _ensure_series(self, x):
         if isinstance(x, pd.Series):
             series = x.copy()
@@ -1166,38 +1343,14 @@ class DhondtXAI:
     def _score_frame(self, X, class_index=None, target_index=None):
         X = self._ensure_frame(X)[self.features]
         output_type = self._resolve_output_type()
-        model_input = self._prepare_model_input(X)
+        scores = np.asarray(self._predict_raw_scores(X, output_type))
 
-        if self.predict_fn is not None:
-            raw_scores = np.asarray(self.predict_fn(model_input))
-            if output_type == "custom":
-                return self._select_output(raw_scores, target_index)
-            if output_type == "logit":
-                values = self._select_output(raw_scores, class_index)
-                values = np.clip(values, self.eps, 1.0 - self.eps)
-                return np.log(values / (1.0 - values))
-            return self._select_output(
-                raw_scores,
-                class_index if output_type in {"probability", "decision"} else target_index,
-            )
-
-        if self.model is None:
-            raise ValueError("No model or predict_fn is available for scoring.")
-
-        if output_type in {"probability", "logit"}:
-            if not hasattr(self.model, "predict_proba"):
-                raise ValueError("output_type='probability' or 'logit' requires predict_proba.")
-            scores = np.asarray(self.model.predict_proba(model_input))
+        if output_type == "logit":
             values = self._select_output(scores, class_index)
-            if output_type == "logit":
-                values = np.clip(values, self.eps, 1.0 - self.eps)
-                values = np.log(values / (1.0 - values))
-            return np.asarray(values, dtype=float)
+            values = np.clip(values, self.eps, 1.0 - self.eps)
+            return np.log(values / (1.0 - values))
 
         if output_type == "decision":
-            if not hasattr(self.model, "decision_function"):
-                raise ValueError("output_type='decision' requires decision_function.")
-            scores = np.asarray(self.model.decision_function(model_input))
             if scores.ndim == 1:
                 classes = self._get_classes()
                 if classes is not None and len(classes) == 2:
@@ -1207,34 +1360,55 @@ class DhondtXAI:
                 return self._ensure_numeric_output(scores, "decision_function")
             return self._select_output(scores, class_index)
 
-        if output_type == "prediction":
-            scores = np.asarray(self.model.predict(model_input))
-            return self._select_output(scores, target_index)
+        if output_type in {"probability", "decision"}:
+            return self._select_output(scores, class_index)
 
-        if output_type == "custom":
-            raise ValueError("output_type='custom' requires predict_fn.")
+        if output_type in {"prediction", "custom"}:
+            return self._select_output(scores, target_index)
 
         raise ValueError("output_type must be auto, probability, logit, decision, prediction, custom.")
 
     def _raw_model_output(self, model_input):
-        output_type = self._resolve_output_type()
+        return self._predict_prepared_input(model_input, self._resolve_output_type())
+
+    def _predict_raw_scores(self, X, output_type):
+        model_input = self._prepare_model_input(X)
+        return self._predict_prepared_input(model_input, output_type)
+
+    def _predict_prepared_input(self, model_input, output_type):
         if self.predict_fn is not None:
             return self.predict_fn(model_input)
 
         if self.model is None:
-            raise ValueError("No model or predict_fn is available for scoring.")
+            raise ValueError("No model or score_fn is available for scoring.")
 
+        adapter = self._resolve_model_adapter()
         if output_type in {"probability", "logit"}:
-            if not hasattr(self.model, "predict_proba"):
-                raise ValueError("output_type='probability' or 'logit' requires predict_proba.")
-            return self.model.predict_proba(model_input)
+            if hasattr(self.model, "predict_proba"):
+                return self.model.predict_proba(model_input)
+            if adapter in {"xgboost", "lightgbm", "catboost", "torch", "keras"}:
+                return self._adapter_predict(model_input, adapter)
+            raise ValueError(
+                "output_type='probability' or 'logit' requires a probability-capable model, "
+                "a compatible model_adapter, or score_fn."
+            )
         if output_type == "decision":
             if not hasattr(self.model, "decision_function"):
-                raise ValueError("output_type='decision' requires decision_function.")
+                if adapter in {"xgboost", "lightgbm", "catboost", "torch", "keras"}:
+                    return self._adapter_predict(model_input, adapter)
+                raise ValueError("output_type='decision' requires decision_function or a compatible adapter.")
             return self.model.decision_function(model_input)
         if output_type == "prediction":
+            if adapter in {"xgboost", "lightgbm", "catboost", "torch", "keras"}:
+                return self._adapter_predict(model_input, adapter)
+            if not hasattr(self.model, "predict"):
+                raise ValueError("output_type='prediction' requires predict or a compatible adapter.")
             return self.model.predict(model_input)
-        raise ValueError("output_type='custom' requires predict_fn.")
+        if output_type == "custom":
+            if adapter in {"xgboost", "lightgbm", "catboost", "torch", "keras"}:
+                return self._adapter_predict(model_input, adapter)
+            raise ValueError("output_type='custom' requires score_fn or a compatible adapter.")
+        raise ValueError("output_type must be auto, probability, logit, decision, prediction, custom.")
 
     def _resolve_output_type(self):
         if self.output_type != "auto":
@@ -1250,9 +1424,89 @@ class DhondtXAI:
     def _prepare_model_input(self, X):
         if self.input_adapter is not None:
             return self.input_adapter(X.copy())
+        adapter = self._resolve_model_adapter()
+        if self.input_format == "auto":
+            if adapter == "xgboost":
+                return self._xgboost_dmatrix(X)
+            if adapter == "torch":
+                return self._torch_tensor(X)
+            if adapter == "keras":
+                return X.to_numpy(dtype=float)
+            return X
         if self.input_format == "numpy":
             return X.to_numpy()
         return X
+
+    def _resolve_model_adapter(self):
+        if self.model_adapter != "auto":
+            return self.model_adapter
+        if self.predict_fn is not None:
+            return "callable"
+        if self.model is None:
+            return "sklearn"
+
+        module = type(self.model).__module__.lower()
+        name = type(self.model).__name__.lower()
+        if "xgboost" in module and name == "booster":
+            return "xgboost"
+        if "lightgbm" in module:
+            return "lightgbm"
+        if "catboost" in module:
+            return "catboost"
+        if "torch" in module or (hasattr(self.model, "forward") and hasattr(self.model, "eval")):
+            return "torch"
+        if "keras" in module or "tensorflow" in module:
+            return "keras"
+        return "sklearn"
+
+    def _adapter_predict(self, model_input, adapter):
+        if adapter == "xgboost":
+            return self.model.predict(model_input)
+        if adapter == "lightgbm":
+            return self.model.predict(model_input)
+        if adapter == "catboost":
+            if hasattr(self.model, "predict_proba") and self._resolve_output_type() in {"auto", "probability", "logit"}:
+                return self.model.predict_proba(model_input)
+            return self.model.predict(model_input)
+        if adapter == "torch":
+            return self._torch_predict(model_input)
+        if adapter == "keras":
+            try:
+                return self.model.predict(model_input, verbose=0)
+            except TypeError:
+                return self.model.predict(model_input)
+        if hasattr(self.model, "predict"):
+            return self.model.predict(model_input)
+        raise ValueError(f"Unsupported model_adapter={adapter!r}. Provide score_fn or input_adapter.")
+
+    def _xgboost_dmatrix(self, X):
+        try:
+            import xgboost as xgb
+        except ImportError as exc:
+            raise ImportError("model_adapter='xgboost' requires the xgboost package.") from exc
+        return xgb.DMatrix(X.to_numpy(), feature_names=[str(feature) for feature in X.columns])
+
+    def _torch_tensor(self, X):
+        try:
+            import torch
+        except ImportError as exc:
+            raise ImportError("model_adapter='torch' requires the torch package.") from exc
+        return torch.as_tensor(X.to_numpy(dtype=float), dtype=torch.float32)
+
+    def _torch_predict(self, model_input):
+        try:
+            import torch
+        except ImportError as exc:
+            raise ImportError("model_adapter='torch' requires the torch package.") from exc
+        was_training = getattr(self.model, "training", False)
+        self.model.eval()
+        with torch.no_grad():
+            output = self.model(model_input)
+        if was_training:
+            self.model.train()
+        if hasattr(output, "detach"):
+            output = output.detach().cpu().numpy()
+        return output
 
     def _select_output(self, scores, index=None):
         scores = np.asarray(scores)
@@ -1272,7 +1526,7 @@ class DhondtXAI:
         except (TypeError, ValueError) as exc:
             raise ValueError(
                 f"{source} must return numeric scores. For classifiers, use output_type='probability', "
-                "'logit', 'decision', or provide a numeric predict_fn."
+                "'logit', 'decision', or provide a numeric score_fn."
             ) from exc
 
     def _validate_class_index(self, class_index, class_count):
@@ -1294,15 +1548,27 @@ class DhondtXAI:
             scores = np.asarray(self.predict_fn(model_input))
         elif output_type in {"probability", "logit"}:
             if not hasattr(self.model, "predict_proba"):
-                raise ValueError("class_index='predicted' with probability/logit requires predict_proba.")
-            scores = np.asarray(self.model.predict_proba(model_input))
+                adapter = self._resolve_model_adapter()
+                if adapter in {"xgboost", "lightgbm", "catboost", "torch", "keras"}:
+                    scores = np.asarray(self._adapter_predict(model_input, adapter))
+                else:
+                    raise ValueError(
+                        "class_index='predicted' with probability/logit requires a probability-capable model."
+                    )
+            else:
+                scores = np.asarray(self.model.predict_proba(model_input))
         elif output_type == "decision":
             if not hasattr(self.model, "decision_function"):
-                raise ValueError("class_index='predicted' with decision output requires decision_function.")
-            scores = np.asarray(self.model.decision_function(model_input))
+                adapter = self._resolve_model_adapter()
+                if adapter in {"xgboost", "lightgbm", "catboost", "torch", "keras"}:
+                    scores = np.asarray(self._adapter_predict(model_input, adapter))
+                else:
+                    raise ValueError("class_index='predicted' with decision output requires decision_function.")
+            else:
+                scores = np.asarray(self.model.decision_function(model_input))
         else:
             raise ValueError(
-                "class_index='predicted' requires probability, logit, decision, or a 2D custom predict_fn output."
+                "class_index='predicted' requires probability, logit, decision, or a 2D custom score_fn output."
             )
 
         if scores.ndim == 2:
