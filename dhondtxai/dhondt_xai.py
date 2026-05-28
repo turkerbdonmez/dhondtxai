@@ -15,7 +15,7 @@ SUPPORTED_OUTPUT_TYPES = {"auto", "probability", "logit", "log_odds", "decision"
 SUPPORTED_BASELINE_MODES = {"full", "sample", "auto"}
 
 RESIDUAL_LABELS_EN = {
-    "__projection_residual__": "projection correction (not a feature)",
+    "__projection_residual__": "projection correction",
     "__below_threshold__": "below-threshold evidence",
     "__excluded__": "excluded-feature effect",
 }

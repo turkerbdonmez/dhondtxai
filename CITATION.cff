@@ -4,8 +4,8 @@ title: "DhondtXAI: D'Hondt-projected removal-effect attributions for explainable
 authors:
   - family-names: "Donmez"
     given-names: "Turker Berk"
-version: "0.9.5.5"
-date-released: "2026-05-28"
+version: "0.9.5.6"
+date-released: "2026-05-29"
 repository-code: "https://github.com/turkerbdonmez/dhondtxai"
 preferred-citation:
   type: article

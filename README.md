@@ -10,7 +10,7 @@ numeric scoring function. It includes automatic adapters for common model
 families such as sklearn-style estimators, XGBoost, LightGBM, CatBoost, PyTorch
 modules, and Keras-like models.
 
-> **Status:** DhondtXAI 0.9.5.5 is an experimental/beta tabular XAI library. It is
+> **Status:** DhondtXAI 0.9.5.6 is an experimental/beta tabular XAI library. It is
 > suitable for research, model inspection, and controlled pilot use. For
 > high-stakes deployment, validate explanations against task-specific benchmarks
 > and compare them with established methods such as SHAP and LIME.
@@ -18,7 +18,7 @@ modules, and Keras-like models.
 ## Install
 
 ```bash
-pip install dhondtxai==0.9.5.5
+pip install dhondtxai==0.9.5.6
 ```
 
 For local development from this repository:
@@ -218,8 +218,9 @@ Residual categories such as excluded or below-threshold effects are stored in
 the original feature columns.
 
 Plots render residuals with friendly labels by default. For example,
-`__projection_residual__` is shown as
-`projection correction (not a feature)` so it is not mistaken for a model input.
+`__projection_residual__` is shown as `projection correction`. Residual rows
+are diagnostic/correction terms, not input columns, so they should be read
+separately from real model features.
 Use `residuals="show"`, `"hide"`, or `"separate"` in local plots.
 
 Single-row explanations also keep the same column order:
@@ -278,10 +279,12 @@ Manual alliances use the exact column names from the background `DataFrame`.
 If a name is misspelled, DhondtXAI raises an error by default
 (`strict_features=True`) instead of silently ignoring it.
 
-Set `alliance_mode="none"` when every variable should stand alone. Use
-`alliance_mode="auto"` when DhondtXAI should infer alliances from interaction
-affinity. Use `alliance_mode="hybrid"` when you want to provide some manual
-alliances and let the remaining variables be grouped automatically.
+By default, `alliance_mode="none"` is used, so automatic alliance formation is
+off unless you explicitly request it. Set `alliance_mode="user"` to group
+variables by exact column names. Use `alliance_mode="auto"` when DhondtXAI
+should infer alliances from interaction affinity and the `rho` threshold. Use
+`alliance_mode="hybrid"` when you want to provide some manual alliances and let
+the remaining variables be grouped automatically.
 
 Threshold behavior is explicit:
 
@@ -692,16 +695,16 @@ print(explainer.check_model_compatibility(X_sample=X_train.head()))
 
 ## Alliance Modes
 
-`alliance_mode="none"` treats each feature as its own actor.
+`alliance_mode="none"` is the default and treats each feature as its own actor.
 
 `alliance_mode="user"` uses only user-defined disjoint alliances and keeps
 remaining features as individual actors.
 
 `alliance_mode="auto"` estimates pairwise interaction affinity and forms
-automatic alliances. Use `auto_alliance_method="connected_components"` for the
-default graph component rule or `auto_alliance_method="complete_linkage"` for a
-stricter rule requiring all pairs inside an alliance to meet the affinity
-threshold.
+automatic alliances when affinity is at least `rho` (default `rho=0.35`). Use
+`auto_alliance_method="connected_components"` for the default graph component
+rule or `auto_alliance_method="complete_linkage"` for a stricter rule requiring
+all pairs inside an alliance to meet the affinity threshold.
 
 `alliance_mode="hybrid"` preserves user-defined alliances and applies automatic
 alliance formation only to the remaining features.
@@ -928,11 +931,11 @@ interpret parliament seats together with `explanation.to_feature_frame()`.
 
 Parliament plots are a core DhondtXAI output. The user controls the requested
 seat count through `seats` in `explain(...)` or `seat_count` in
-`plot_signed_parliament(...)`. The visual layer uses a high-contrast qualitative
-palette by default: positive evidence uses blue/green/cyan tones and negative
-evidence uses orange/red/pink tones. This keeps direction visually clear while
-still giving different alliances separable colors. Use `palette="distinct"` if
-you prefer a fully qualitative palette independent of sign.
+`plot_signed_parliament(...)`. The default parliament style uses a paper-style
+semicircular chamber with high-contrast qualitative colors and legend labels in
+MP units. Use `palette="signed"` if you want color families to encode positive
+versus negative evidence, or `palette="distinct"` if you prefer a colorblind-
+aware qualitative palette.
 
 For readability, awkward display totals are snapped to clean counts by default:
 multiples of 10 for small parliaments, 50 for medium parliaments, and 100 for
@@ -940,9 +943,9 @@ larger parliaments. For example, a 257-seat request is visualized as 250 seats
 unless `snap_seats=False` is passed. This affects only the display; numerical
 attributions use `allocation_seats`.
 
-The parliament geometry uses a smaller inner half-circle so the evidence ring
-is visually denser and closer to the legacy
-DhondtXAI parliament view.
+The parliament geometry is optimized for the legacy/paper DhondtXAI visual:
+clean semicircular rows, a readable inner chamber, and snapped display totals
+for awkward seat counts.
 
 ```python
 explanation = explainer.explain(X_test.iloc[0], seats=257)
@@ -951,7 +954,7 @@ plot_signed_parliament(
     explanation,
     mode="signed",
     seat_count=257,
-    palette="signed",
+    palette="paper",
     snap_seats=True,
 )
 ```
@@ -1024,7 +1027,7 @@ python -m twine check dist/*
 Then a built wheel can be installed locally with:
 
 ```bash
-pip install dist/dhondtxai-0.9.5.5-py3-none-any.whl
+pip install dist/dhondtxai-0.9.5.6-py3-none-any.whl
 ```
 
 Publishing to PyPI requires a PyPI API token:

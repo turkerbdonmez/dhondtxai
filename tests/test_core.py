@@ -712,7 +712,7 @@ def test_compatibility_checker_works_with_x_sample_without_background():
 
 
 def test_package_version_exposed():
-    assert __version__ == "0.9.5.5"
+    assert __version__ == "0.9.5.6"
 
 
 def test_public_strings_do_not_use_non_ascii_locale_characters():

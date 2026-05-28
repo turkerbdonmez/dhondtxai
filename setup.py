@@ -5,7 +5,7 @@ from setuptools import setup, find_packages
 
 
 ROOT = Path(__file__).resolve().parent
-VERSION = "0.9.5.5"
+VERSION = "0.9.5.6"
 README = (ROOT / "README.md").read_text(encoding="utf-8")
 
 setup(

@@ -14,13 +14,15 @@ def plot_parliament(
     features,
     seats,
     slices=50,
-    additional_rows=5,
+    additional_rows=0,
     colors=None,
     title=None,
     snap_seats=True,
     seat_step="auto",
     max_legend_items=12,
-    inner_radius_ratio=0.26,
+    inner_radius_ratio=0.36,
+    seat_label="MPs",
+    show_scaled_counts=False,
     empty_message="No eligible D'Hondt seats",
     quality_note=None,
     language="en",
@@ -58,7 +60,7 @@ def plot_parliament(
     )
 
     if colors is None:
-        colors = _default_colors(len(features))
+        colors = _paper_colors(len(features))
     else:
         colors = list(colors)
         if len(colors) != len(features):
@@ -69,8 +71,10 @@ def plot_parliament(
     sorted_features = [features[index] for index in order if int(display_seats[index]) > 0]
 
     effective_slices = int(slices) + max(0, int(additional_rows))
+    if effective_slices <= 0:
+        raise ValueError("slices plus additional_rows must be positive.")
     seat_rows = max(1, math.ceil(display_total_seats / effective_slices))
-    angle_gap = 0.2
+    angle_gap = 0.15
     radial_angles = np.linspace(180, 0, effective_slices + 1)
 
     radius = 10
@@ -91,7 +95,7 @@ def plot_parliament(
             plt.show()
         return fig, ax
 
-    fig, ax = plt.subplots(figsize=(14, 8))
+    fig, ax = plt.subplots(figsize=(16, 7.5))
     current_feature = 0
     remaining_seats = int(display_seats[features.index(sorted_features[current_feature])]) if sorted_features else 0
     current_color = feature_colors[sorted_features[current_feature]] if sorted_features else "tab:gray"
@@ -122,8 +126,8 @@ def plot_parliament(
                 start_angle,
                 width=piece_depth - 0.1,
                 facecolor=current_color,
-                edgecolor="none",
-                linewidth=0,
+                edgecolor="white",
+                linewidth=0.35,
                 zorder=1,
             )
             ax.add_patch(wedge)
@@ -157,10 +161,10 @@ def plot_parliament(
         original_seat_count = int(seats[features.index(feature)])
         if seat_count <= 0:
             continue
-        if seat_count != original_seat_count:
-            label = f"{feature} ({original_seat_count} seats, shown {seat_count})"
+        if seat_count != original_seat_count and show_scaled_counts:
+            label = f"{feature} ({original_seat_count} {seat_label}, shown as {seat_count})"
         else:
-            label = f"{feature} ({seat_count} seats)"
+            label = f"{feature} ({seat_count} {seat_label})"
         legend_patches.append(
             plt.Rectangle((0, 0), 1, 1, color=feature_colors[feature], label=label)
         )
@@ -199,21 +203,24 @@ def plot_signed_parliament(
     explanation,
     mode="signed",
     slices=50,
-    additional_rows=5,
+    additional_rows=0,
     seat_count=None,
     snap_seats=True,
     seat_step="auto",
     max_legend_items=12,
-    palette="signed",
-    inner_radius_ratio=0.26,
+    palette="paper",
+    inner_radius_ratio=0.36,
+    seat_label="MPs",
+    show_scaled_counts=False,
+    show_quality_note=False,
     language="en",
     show=True,
 ):
     """Plot positive, negative, or combined DhondtXAI seats."""
     if mode not in {"signed", "positive", "negative"}:
         raise ValueError("mode must be signed, positive, or negative.")
-    if palette not in {"signed", "distinct", "positive_negative"}:
-        raise ValueError("palette must be 'signed', 'distinct', or 'positive_negative'.")
+    if palette not in {"paper", "signed", "distinct", "positive_negative"}:
+        raise ValueError("palette must be 'paper', 'signed', 'distinct', or 'positive_negative'.")
     _validate_language(language)
 
     names = explanation.eligible_alliances
@@ -245,7 +252,7 @@ def plot_signed_parliament(
         title = "DhondtXAI Signed Evidence Parliament"
 
     colors = _palette_colors(labels, signs, palette)
-    quality_note = _quality_note(explanation, language)
+    quality_note = _quality_note(explanation, language) if show_quality_note else None
 
     total = int(sum(seats))
     if total <= 0:
@@ -264,6 +271,8 @@ def plot_signed_parliament(
         seat_step=seat_step,
         max_legend_items=max_legend_items,
         inner_radius_ratio=inner_radius_ratio,
+        seat_label=seat_label,
+        show_scaled_counts=show_scaled_counts,
         quality_note=quality_note,
         language=language,
         show=show,
@@ -305,9 +314,43 @@ def _default_colors(count):
     return colors[:count]
 
 
+def _paper_colors(count):
+    colors = [
+        "#ff00ff",
+        "#0000ff",
+        "#00d7ff",
+        "#ff9900",
+        "#ffd700",
+        "#00cc44",
+        "#008000",
+        "#ff0000",
+        "#7f00ff",
+        "#ff66aa",
+        "#00a6a6",
+        "#8b4513",
+        "#4b0082",
+        "#ff6f00",
+        "#00ff99",
+        "#3366ff",
+        "#cc0066",
+        "#999900",
+        "#cc3300",
+        "#0099ff",
+        "#66cc00",
+        "#cc99ff",
+        "#ffcc00",
+        "#333333",
+    ]
+    if count > len(colors):
+        colors += [_golden_angle_color(index) for index in range(count - len(colors))]
+    return colors[:count]
+
+
 def _palette_colors(labels, signs, palette):
     labels = list(labels)
     signs = list(signs)
+    if palette == "paper":
+        return _paper_colors(len(labels))
     if palette == "distinct":
         return _default_colors(len(labels))
 

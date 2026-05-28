@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.9.5.6
+
+- Updated the parliament visualization defaults to a paper-style semicircular
+  chamber with a high-contrast qualitative palette, MP labels, cleaner seat
+  boundaries, and a more balanced inner chamber.
+- Added `palette="paper"`, `seat_label`, `show_scaled_counts`, and
+  `show_quality_note` controls for parliament plots.
+- Simplified the projection residual display label from `projection correction
+  (not a feature)` to `projection correction` while keeping README guidance
+  that residual rows are diagnostics rather than model input columns.
+- Clarified that automatic alliance formation is off by default
+  (`alliance_mode="none"`) and that `alliance_mode="auto"` uses interaction
+  affinity with the `rho` threshold.
+- Regenerated all example visual outputs with the updated parliament style.
+
 ## 0.9.5.5
 
 - Fixed ambiguous `target=1` behavior for auto-resolved multi-output

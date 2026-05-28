@@ -63,13 +63,13 @@ def main():
     fig, _ = explainer.plot_waterfall(explanation, top_k=12, show=False)
     save(fig, "waterfall.png")
 
-    fig, _ = plot_signed_parliament(explanation, mode="signed", seat_count=200, show=False)
+    fig, _ = plot_signed_parliament(explanation, mode="signed", seat_count=600, show=False)
     save(fig, "signed_parliament.png", "parliamentview.png")
 
-    fig, _ = plot_signed_parliament(explanation, mode="positive", seat_count=200, show=False)
+    fig, _ = plot_signed_parliament(explanation, mode="positive", seat_count=600, show=False)
     save(fig, "positive_parliament.png")
 
-    fig, _ = plot_signed_parliament(explanation, mode="negative", seat_count=200, show=False)
+    fig, _ = plot_signed_parliament(explanation, mode="negative", seat_count=600, show=False)
     save(fig, "negative_parliament.png")
 
     global_frame = explainer.explain_global(
